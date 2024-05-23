@@ -1212,7 +1212,7 @@ where
             cache: _,
             blocking_task_pool: _,
         } = self.with_eth(|eth| eth.clone());
-
+        
         // Create a copy, so we can list out all the methods for rpc_ api
         let namespaces: Vec<_> = namespaces.collect();
         namespaces
@@ -1235,8 +1235,11 @@ where
                         .into_rpc()
                         .into(),
                         RethRpcModule::Eth => {
-                            // merge all eth handlers
-                            let mut module = eth_api.clone().into_rpc();
+                            // merge all eth and trace handlers
+                            let mut eth_api_clone = eth_api.clone();
+                            eth_api_clone.tracer = Some(TraceApi::new( self.provider.clone(), eth_api.clone(), self.blocking_pool_guard.clone()));
+
+                            let mut module = eth_api_clone.into_rpc();
                             module.merge(eth_filter.clone().into_rpc()).expect("No conflicts");
                             module.merge(eth_pubsub.clone().into_rpc()).expect("No conflicts");
 

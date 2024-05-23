@@ -313,6 +313,8 @@ alloy-signer-wallet = { git = "https://github.com/alloy-rs/alloy", rev = "dd7a99
 alloy-network = { git = "https://github.com/alloy-rs/alloy", rev = "dd7a999" }
 alloy-consensus = { git = "https://github.com/alloy-rs/alloy", rev = "dd7a999" }
 
+alloy-serde = { git = "https://github.com/alloy-rs/alloy", rev = "dd7a999" }
+
 # misc
 auto_impl = "1"
 aquamarine = "0.5"

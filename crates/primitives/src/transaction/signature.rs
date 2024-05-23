@@ -3,6 +3,7 @@ use alloy_primitives::Bytes;
 use alloy_rlp::{Decodable, Encodable, Error as RlpError};
 use bytes::Buf;
 use reth_codecs::{derive_arbitrary, Compact};
+use ::secp256k1::PublicKey;
 use serde::{Deserialize, Serialize};
 
 /// The order of the secp256k1 curve, divided by two. Signatures that should be checked according
@@ -171,6 +172,28 @@ impl Signature {
         }
 
         self.recover_signer_unchecked(hash)
+    }
+
+    ///Recovers public key
+    pub fn recover_pubkey_unchecked(&self, hash: B256) -> Option<PublicKey> {
+        let mut sig: [u8; 65] = [0; 65];
+
+        sig[0..32].copy_from_slice(&self.r.to_be_bytes::<32>());
+        sig[32..64].copy_from_slice(&self.s.to_be_bytes::<32>());
+        sig[64] = self.odd_y_parity as u8;
+
+        // NOTE: we are removing error from underlying crypto library as it will restrain primitive
+        // errors and we care only if recovery is passing or not.
+        secp256k1::recover_pubkey_unchecked(&sig, &hash.0).ok()
+    }
+
+    ///Recovers public key
+    pub fn recover_pubkey(&self, hash: B256) -> Option<PublicKey> {
+        if self.s > SECP256K1N_HALF {
+            return None
+        }
+
+        self.recover_pubkey_unchecked(hash)
     }
 
     /// Turn this signature into its byte

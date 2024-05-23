@@ -1,23 +1,27 @@
 //! Implementation of the [`jsonrpsee`] generated [`reth_rpc_api::EthApiServer`] trait
 //! Handles RPC requests for the `eth_` namespace.
 
-use jsonrpsee::core::RpcResult as Result;
+use jsonrpsee::{core::RpcResult as Result, types::ErrorObjectOwned};
+use reth_consensus_common::calc::{base_block_reward, block_reward};
 use reth_evm::ConfigureEvm;
 use reth_network_api::NetworkInfo;
-use reth_primitives::{Address, BlockId, BlockNumberOrTag, Bytes, B256, B64, U256, U64};
+use reth_primitives::{public_key_to_address, Address, BlockId, BlockNumberOrTag, Bytes, Signature, B256, B64, U256, U64};
 use reth_provider::{
     BlockIdReader, BlockReader, BlockReaderIdExt, ChainSpecProvider, EvmEnvProvider,
     HeaderProvider, StateProviderFactory,
 };
-use reth_rpc_api::EthApiServer;
+use reth_rpc_api::{data::{EnrichedBlock, EnrichedTransaction}, EthApiServer};
 use reth_rpc_types::{
-    serde_helpers::JsonStorageKey, state::StateOverride, AccessListWithGasUsed,
-    AnyTransactionReceipt, BlockOverrides, Bundle, EIP1186AccountProofResponse, EthCallResponse,
-    FeeHistory, Header, Index, RichBlock, StateContext, SyncStatus, TransactionRequest, Work,
+    serde_helpers::JsonStorageKey, state::StateOverride, trace::parity::{RewardAction, RewardType}, AccessListWithGasUsed, AnyTransactionReceipt, Block, BlockOverrides, BlockTransactions, Bundle, EIP1186AccountProofResponse, EthCallResponse, FeeHistory, Header, Index, Rich, RichBlock, StateContext, SyncStatus, TransactionRequest, Work
 };
 use reth_transaction_pool::TransactionPool;
+use revm_primitives::{hex::ToHexExt, FixedBytes, HashSet};
 use serde_json::Value;
 use tracing::trace;
+use alloy_consensus::TxEnvelope;
+use alloy_primitives::Signature as Alloy_Signature;
+
+use ::secp256k1::PublicKey;
 
 use crate::{
     eth::{
@@ -25,10 +29,13 @@ use crate::{
         error::EthApiError,
         revm_utils::EvmOverrides,
     },
-    result::{internal_rpc_err, ToRpcResult},
+    result::{internal_rpc_err, ToRpcResult}, trace::reward_trace,
 };
 
 use super::EthApiSpec;
+
+use reth_rpc_api::data;
+use reth_rpc_types::trace::parity::TraceType;
 
 #[async_trait::async_trait]
 impl<Provider, Pool, Network, EvmConfig> EthApiServer for EthApi<Provider, Pool, Network, EvmConfig>
@@ -97,6 +104,214 @@ where
     ) -> Result<Option<RichBlock>> {
         trace!(target: "rpc::eth", ?number, ?full, "Serving eth_getBlockByNumber");
         Ok(EthApi::rpc_block(self, number, full).await?)
+    }
+
+    /// Handler for: `eth_getBlockReceiptTrace`
+    async fn block_receipts_trace(
+        &self,
+        number: BlockNumberOrTag
+    )-> Result<Option<Rich<EnrichedBlock>>> {
+        trace!(target: "rpc::eth", ?number, ?true, "Serving eth_getBlockReceiptTrace");
+        
+        let traces_set:HashSet<TraceType> = HashSet::from([TraceType::Trace]);
+        let tracer_clone = self.tracer.clone().unwrap();
+
+        let trace_task = tokio::spawn(async move {
+                let trace_res = tracer_clone.replay_block_transactions(BlockId::Number(number), traces_set).await;
+                trace_res
+        });
+
+        //static block rewards
+        let mut block_reward_traces =  Vec::new();
+
+        let f_block = self.block_by_id(BlockId::Number(number));
+        let block_repr = futures::try_join!(f_block)?;
+
+        if let (Some(block_repr_data),) = block_repr{
+            if let Ok(Some(header_td)) = self.provider().header_td(&block_repr_data.header.hash()) {
+                if let Some(base_block_reward) = base_block_reward(
+                    self.provider().chain_spec().as_ref(),
+                    block_repr_data.header.number,
+                    block_repr_data.header.difficulty,
+                    header_td,
+                ) {
+                    block_reward_traces.push(reward_trace(
+                        &block_repr_data.header,
+                        RewardAction {
+                            author: block_repr_data.header.beneficiary,
+                            reward_type: RewardType::Block,
+                            value: U256::from(base_block_reward),
+                        },
+                    ));
+
+                    if !block_repr_data.ommers.is_empty() {
+                        block_reward_traces.push(reward_trace(
+                            &block_repr_data.header,
+                            RewardAction {
+                                author: block_repr_data.header.beneficiary,
+                                reward_type: RewardType::Uncle,
+                                value: U256::from(
+                                    block_reward(base_block_reward, block_repr_data.ommers.len()) -
+                                        base_block_reward,
+                                ),
+                            },
+                        ));
+                    }
+                }
+            }
+
+        }
+        // static block rewards
+
+        let block: Rich<Block> = EthApi::rpc_block(self, number, true).await?.unwrap();
+        let RichBlock{
+            inner,
+            extra_info
+        } = block;
+
+        let trx_receipts = EthApi::block_receipts(self, BlockId::Number(number)).await?.unwrap();
+        if trx_receipts.len() != inner.transactions.len(){
+            let trx_trace_len_error = ErrorObjectOwned::owned(
+                1,
+                "trx_receipts.size() != block.transactions.size()",
+                None::<()> 
+            );
+            return Err(trx_trace_len_error)
+        }
+     
+        let trx_traces = trace_task.await.unwrap()?.unwrap();
+        if trx_traces.len() != inner.transactions.len(){
+            let trx_trace_len_error = ErrorObjectOwned::owned(
+                1,
+                "trx_traces.size() != block.transactions.size()",
+                None::<()> 
+            );
+            return Err(trx_trace_len_error)
+        }
+
+        let mut enriched_trxs: Vec<EnrichedTransaction> = Vec::new();
+        if let BlockTransactions::Full(transactions) = inner.transactions {
+
+            let trx_iter = transactions.into_iter();
+            let receipts_iter: std::vec::IntoIter<reth_rpc_types::WithOtherFields<reth_rpc_types::TransactionReceipt<data::AnyReceiptEnvelope<reth_rpc_types::Log>>>> = trx_receipts.into_iter();
+            let trace_iter = trx_traces.into_iter();
+
+            for ((trx, receipt), trace) in trx_iter.zip(receipts_iter).zip(trace_iter){
+               if trx.hash != trace.transaction_hash{
+                let trx_trace_hash_error = ErrorObjectOwned::owned(
+                    2,
+                    "Mismatch between transaction hash and coresponding trace hash",
+                    None::<()> 
+                );
+                return Err(trx_trace_hash_error)    
+               }
+
+               let mut pub_key: Option<PublicKey> = None;
+               
+               match TxEnvelope::try_from(trx.clone()) {
+                   Ok(tx_envelope) => {
+                        let tx_message_hash: Option<FixedBytes<32>>;
+                        let tx_sig: Option<Alloy_Signature>;
+
+                    match tx_envelope{
+                        TxEnvelope::Legacy(typed_tx) =>{
+                            tx_message_hash = Some(typed_tx.signature_hash());
+                            tx_sig = Some(typed_tx.signature().clone());
+                        }
+                        TxEnvelope::Eip1559(typed_tx)=>{
+                            tx_message_hash = Some(typed_tx.signature_hash());
+                            tx_sig = Some(typed_tx.signature().clone());
+                        }
+                        TxEnvelope::Eip2930(typed_tx)=>{
+                            tx_message_hash = Some(typed_tx.signature_hash());
+                            tx_sig = Some(typed_tx.signature().clone());
+                        }
+                        TxEnvelope::Eip4844(typed_tx)=>{
+                            tx_message_hash = Some(typed_tx.signature_hash());
+                            tx_sig = Some(typed_tx.signature().clone());
+                        }
+                        _ =>{
+                            let trx_trace_hash_error = ErrorObjectOwned::owned(
+                                3,
+                                "Unmatched transaction type",
+                                None::<()> 
+                            );
+                            return Err(trx_trace_hash_error)    
+                           }
+                        }
+
+                    if tx_sig.is_none() || tx_message_hash.is_none(){
+                        let trx_sig_error = ErrorObjectOwned::owned(
+                            1,
+                            "Signature not extracted from transaction",
+                            None::<()> 
+                        );
+                        return Err(trx_sig_error)    
+                    }
+                    
+                    let reth_signature = Signature{
+                        r: tx_sig.unwrap().r(),
+                        s: tx_sig.unwrap().s(),
+                        odd_y_parity: tx_sig.unwrap().v().y_parity(),
+                    };
+
+                    pub_key = reth_signature.recover_pubkey(tx_message_hash.unwrap());
+
+                    if pub_key.is_none(){
+                        let trx_pub_key_error = ErrorObjectOwned::owned(
+                            1,
+                            "Public key not extracted from transaction",
+                            None::<()> 
+                        );
+                        return Err(trx_pub_key_error)
+                    }
+
+                    }
+                Err(e) => {
+                    // Handle conversion error
+                    println!("Conversion error: {:?}", e);
+                }
+                }
+
+                let recovered_address = public_key_to_address(pub_key.unwrap());
+                if recovered_address != trx.from{
+                    let trx_pub_key_addr_error = ErrorObjectOwned::owned(
+                        1,
+                        format!("Address doesn't match public key to address for {}", trx.hash),
+                        None::<()> 
+                    );
+                    return Err(trx_pub_key_addr_error)
+                }
+
+                let compressed_pub_key = pub_key.unwrap().serialize().encode_hex();
+
+                enriched_trxs.push(data::EnrichedTransaction{
+                        inner: trx,
+                        public_key: format!("0x{}", compressed_pub_key),
+                        receipts: receipt,
+                        trace : trace.full_trace
+                })
+            }
+        }
+
+        let e_block: Block<data::EnrichedTransaction> = Block{
+            header: inner.header,
+            uncles: inner.uncles,
+            transactions: BlockTransactions::Full(enriched_trxs),
+            size: inner.size,
+            withdrawals: inner.withdrawals,
+            other: inner.other
+        };
+
+        let rich_block: Rich<EnrichedBlock> = Rich{
+            inner: EnrichedBlock{
+                inner: e_block,
+                rewards: block_reward_traces
+            },
+            extra_info
+        };
+
+        Ok(Some(rich_block))
     }
 
     /// Handler for: `eth_getBlockTransactionCountByHash`

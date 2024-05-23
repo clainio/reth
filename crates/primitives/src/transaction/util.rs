@@ -22,6 +22,15 @@ pub(crate) mod secp256k1 {
         Ok(public_key_to_address(public))
     }
 
+    ///Recovers public key from signature
+    pub(crate) fn recover_pubkey_unchecked(sig: &[u8; 65], msg: &[u8; 32]) -> Result<PublicKey, Error> {
+        let sig =
+            RecoverableSignature::from_compact(&sig[0..64], RecoveryId::from_i32(sig[64] as i32)?)?;
+
+        let public = SECP256K1.recover_ecdsa(&Message::from_digest(*msg), &sig)?;
+        Ok(public)
+    }
+
     /// Signs message with the given secret key.
     /// Returns the corresponding signature.
     pub fn sign_message(secret: B256, message: B256) -> Result<Signature, secp256k1::Error> {

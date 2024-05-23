@@ -18,6 +18,32 @@ reth-rpc-types.workspace = true
 reth-engine-primitives.workspace = true
 reth-network-types.workspace = true
 
+alloy-rlp.workspace = true
+alloy-dyn-abi = { workspace = true, features = ["eip712"] }
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
+
+alloy-chains.workspace = true
+alloy-trie.workspace = true
+
+#allow-serde.workspace = true
+
+alloy-rpc-types.workspace = true
+alloy-rpc-types-anvil.workspace = true
+alloy-rpc-types-trace.workspace = true
+alloy-rpc-types-engine.workspace = true
+alloy-rpc-types-beacon.workspace = true
+alloy-genesis.workspace = true
+alloy-node-bindings.workspace = true
+alloy-provider.workspace = true
+alloy-eips.workspace = true
+alloy-signer.workspace = true
+alloy-signer-wallet.workspace = true
+alloy-network.workspace = true
+alloy-consensus.workspace = true
+
+alloy-serde.workspace = true
+
 # misc
 jsonrpsee = { workspace = true, features = ["server", "macros"] }
 serde_json.workspace = true

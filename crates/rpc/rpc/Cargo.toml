@@ -33,6 +33,7 @@ reth-evm-optimism = { workspace = true, optional = true }
 
 # eth
 alloy-rlp.workspace = true
+alloy-consensus.workspace = true
 alloy-dyn-abi = { workspace = true, features = ["eip712"] }
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
