@@ -20,7 +20,7 @@ use reth_primitives::{GOERLI, HOLESKY, MAINNET, SEPOLIA};
 
 #[cfg(feature = "optimism")]
 /// Chains supported by op-reth. First value should be used as the default.
-pub const SUPPORTED_CHAINS: &[&str] = &["base", "base-sepolia", "optimism", "optimism-sepolia"];
+pub const SUPPORTED_CHAINS: &[&str] = &["optimism", "optimism-sepolia", "base", "base-sepolia"];
 #[cfg(not(feature = "optimism"))]
 /// Chains supported by reth. First value should be used as the default.
 pub const SUPPORTED_CHAINS: &[&str] = &["mainnet", "sepolia", "goerli", "holesky", "dev"];
@@ -141,7 +141,7 @@ pub enum SocketAddressParsingError {
 /// The following formats are checked:
 ///
 /// - If the value can be parsed as a `u16` or starts with `:` it is considered a port, and the
-/// hostname is set to `localhost`.
+///   hostname is set to `localhost`.
 /// - If the value contains `:` it is assumed to be the format `<host>:<port>`
 /// - Otherwise it is assumed to be a hostname
 ///

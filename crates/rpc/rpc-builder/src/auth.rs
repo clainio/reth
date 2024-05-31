@@ -133,7 +133,7 @@ where
 
     // Create auth middleware.
     let middleware =
-        tower::ServiceBuilder::new().layer(AuthLayer::new(JwtAuthValidator::new(secret.clone())));
+        tower::ServiceBuilder::new().layer(AuthLayer::new(JwtAuthValidator::new(secret)));
 
     // By default, both http and ws are enabled.
     let server = ServerBuilder::new()
@@ -170,12 +170,12 @@ pub struct AuthServerConfig {
 
 impl AuthServerConfig {
     /// Convenience function to create a new `AuthServerConfig`.
-    pub fn builder(secret: JwtSecret) -> AuthServerConfigBuilder {
+    pub const fn builder(secret: JwtSecret) -> AuthServerConfigBuilder {
         AuthServerConfigBuilder::new(secret)
     }
 
     /// Returns the address the server will listen on.
-    pub fn address(&self) -> SocketAddr {
+    pub const fn address(&self) -> SocketAddr {
         self.socket_addr
     }
 
@@ -184,8 +184,8 @@ impl AuthServerConfig {
         let Self { socket_addr, secret, server_config, ipc_server_config, ipc_endpoint } = self;
 
         // Create auth middleware.
-        let middleware = tower::ServiceBuilder::new()
-            .layer(AuthLayer::new(JwtAuthValidator::new(secret.clone())));
+        let middleware =
+            tower::ServiceBuilder::new().layer(AuthLayer::new(JwtAuthValidator::new(secret)));
 
         // By default, both http and ws are enabled.
         let server = server_config
@@ -231,7 +231,7 @@ pub struct AuthServerConfigBuilder {
 
 impl AuthServerConfigBuilder {
     /// Create a new `AuthServerConfigBuilder` with the given `secret`.
-    pub fn new(secret: JwtSecret) -> Self {
+    pub const fn new(secret: JwtSecret) -> Self {
         Self {
             socket_addr: None,
             secret,
@@ -242,19 +242,19 @@ impl AuthServerConfigBuilder {
     }
 
     /// Set the socket address for the server.
-    pub fn socket_addr(mut self, socket_addr: SocketAddr) -> Self {
+    pub const fn socket_addr(mut self, socket_addr: SocketAddr) -> Self {
         self.socket_addr = Some(socket_addr);
         self
     }
 
     /// Set the socket address for the server.
-    pub fn maybe_socket_addr(mut self, socket_addr: Option<SocketAddr>) -> Self {
+    pub const fn maybe_socket_addr(mut self, socket_addr: Option<SocketAddr>) -> Self {
         self.socket_addr = socket_addr;
         self
     }
 
     /// Set the secret for the server.
-    pub fn secret(mut self, secret: JwtSecret) -> Self {
+    pub const fn secret(mut self, secret: JwtSecret) -> Self {
         self.secret = secret;
         self
     }
@@ -379,7 +379,7 @@ pub struct AuthServerHandle {
 
 impl AuthServerHandle {
     /// Returns the [`SocketAddr`] of the http server if started.
-    pub fn local_addr(&self) -> SocketAddr {
+    pub const fn local_addr(&self) -> SocketAddr {
         self.local_addr
     }
 
@@ -403,7 +403,7 @@ impl AuthServerHandle {
         &self,
     ) -> jsonrpsee::http_client::HttpClient<AuthClientService<HttpBackend>> {
         // Create a middleware that adds a new JWT token to every request.
-        let secret_layer = AuthClientLayer::new(self.secret.clone());
+        let secret_layer = AuthClientLayer::new(self.secret);
         let middleware = tower::ServiceBuilder::default().layer(secret_layer);
         jsonrpsee::http_client::HttpClientBuilder::default()
             .set_http_middleware(middleware)

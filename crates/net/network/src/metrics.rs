@@ -69,12 +69,12 @@ pub struct NetworkMetrics {
     /// [`TransactionsManager`](crate::transactions::TransactionsManager) holds this handle.
     ///
     /// Duration in seconds.
-    pub(crate) duration_poll_network_handle: Gauge,
+    pub(crate) acc_duration_poll_network_handle: Gauge,
     /// Time spent polling [`Swarm`](crate::swarm::Swarm), in one call to poll the
     /// [`NetworkManager`](crate::NetworkManager) future.
     ///
     /// Duration in seconds.
-    pub(crate) duration_poll_swarm: Gauge,
+    pub(crate) acc_duration_poll_swarm: Gauge,
 }
 
 /// Metrics for SessionManager
@@ -226,12 +226,12 @@ pub struct TransactionFetcherMetrics {
 /// accumulator value passed as a mutable reference.
 #[macro_export]
 macro_rules! duration_metered_exec {
-    ($code:expr, $acc:ident) => {{
-        let start = Instant::now();
+    ($code:expr, $acc:expr) => {{
+        let start = std::time::Instant::now();
 
         let res = $code;
 
-        *$acc += start.elapsed();
+        $acc += start.elapsed();
 
         res
     }};
@@ -310,11 +310,21 @@ impl DisconnectMetrics {
 #[derive(Metrics)]
 #[metrics(scope = "network")]
 pub struct EthRequestHandlerMetrics {
-    /// Number of received headers requests
-    pub(crate) received_headers_requests: Counter,
+    /// Number of GetBlockHeaders requests received
+    pub(crate) eth_headers_requests_received_total: Counter,
 
-    /// Number of received bodies requests
-    pub(crate) received_bodies_requests: Counter,
+    /// Number of GetReceipts requests received
+    pub(crate) eth_receipts_requests_received_total: Counter,
+
+    /// Number of GetBlockBodies requests received
+    pub(crate) eth_bodies_requests_received_total: Counter,
+
+    /// Number of GetNodeData requests received
+    pub(crate) eth_node_data_requests_received_total: Counter,
+
+    /// Duration in seconds of call to poll
+    /// [`EthRequestHandler`](crate::eth_requests::EthRequestHandler).
+    pub(crate) acc_duration_poll_eth_req_handler: Gauge,
 }
 
 /// Eth67 announcement metrics, track entries by TxType
