@@ -80,7 +80,7 @@ pub trait EthApiSpec: EthTransactions + Send + Sync {
 /// `Eth` API implementation.
 ///
 /// This type provides the functionality for handling `eth_` related requests.
-/// These are implemented two-fold: Core functionality is implemented as [EthApiSpec]
+/// These are implemented two-fold: Core functionality is implemented as [`EthApiSpec`]
 /// trait. Additionally, the required server implementations (e.g. [`reth_rpc_api::EthApiServer`])
 /// are implemented separately in submodules. The rpc handler implementation can then delegate to
 /// the main impls. This way [`EthApi`] is not limited to [`jsonrpsee`] and can be used standalone
@@ -90,6 +90,15 @@ pub struct EthApi<Provider, Pool, Network, EvmConfig> {
     inner: Arc<EthApiInner<Provider, Pool, Network, EvmConfig>>,
     ///for trace rpc
     pub tracer: Option<TraceApi<Provider, EthApi<Provider, Pool, Network, EvmConfig>>>
+}
+
+impl<Provider, Pool, Network, EvmConfig> EthApi<Provider, Pool, Network, EvmConfig> {
+    /// Sets a forwarder for `eth_sendRawTransaction`
+    ///
+    /// Note: this might be removed in the future in favor of a more generic approach.
+    pub fn set_eth_raw_transaction_forwarder(&self, forwarder: Arc<dyn RawTransactionForwarder>) {
+        self.inner.raw_transaction_forwarder.write().replace(forwarder);
+    }
 }
 
 impl<Provider, Pool, Network, EvmConfig> EthApi<Provider, Pool, Network, EvmConfig>
@@ -162,7 +171,7 @@ where
             blocking_task_pool,
             fee_history_cache,
             evm_config,
-            raw_transaction_forwarder,
+            raw_transaction_forwarder: parking_lot::RwLock::new(raw_transaction_forwarder),
         };
 
 
@@ -234,14 +243,14 @@ where
     Provider:
         BlockReaderIdExt + ChainSpecProvider + StateProviderFactory + EvmEnvProvider + 'static,
 {
-    /// Returns the state at the given [BlockId] enum.
+    /// Returns the state at the given [`BlockId`] enum.
     ///
-    /// Note: if not [BlockNumberOrTag::Pending] then this will only return canonical state. See also <https://github.com/paradigmxyz/reth/issues/4515>
+    /// Note: if not [`BlockNumberOrTag::Pending`] then this will only return canonical state. See also <https://github.com/paradigmxyz/reth/issues/4515>
     pub fn state_at_block_id(&self, at: BlockId) -> EthResult<StateProviderBox> {
         Ok(self.provider().state_by_block_id(at)?)
     }
 
-    /// Returns the state at the given [BlockId] enum or the latest.
+    /// Returns the state at the given [`BlockId`] enum or the latest.
     ///
     /// Convenience function to interprets `None` as `BlockId::Number(BlockNumberOrTag::Latest)`
     pub fn state_at_block_id_or_latest(
@@ -274,7 +283,7 @@ where
     Network: NetworkInfo + Send + Sync + 'static,
     EvmConfig: ConfigureEvm + Clone + 'static,
 {
-    /// Configures the [CfgEnvWithHandlerCfg] and [BlockEnv] for the pending block
+    /// Configures the [`CfgEnvWithHandlerCfg`] and [`BlockEnv`] for the pending block
     ///
     /// If no pending block is available, this will derive it from the `latest` block
     pub(crate) fn pending_block_env_and_cfg(&self) -> EthResult<PendingBlockEnv> {
@@ -438,10 +447,10 @@ where
     }
 }
 
-/// The default gas limit for eth_call and adjacent calls.
+/// The default gas limit for `eth_call` and adjacent calls.
 ///
 /// This is different from the default to regular 30M block gas limit
-/// [ETHEREUM_BLOCK_GAS_LIMIT](reth_primitives::constants::ETHEREUM_BLOCK_GAS_LIMIT) to allow for
+/// [`ETHEREUM_BLOCK_GAS_LIMIT`](reth_primitives::constants::ETHEREUM_BLOCK_GAS_LIMIT) to allow for
 /// more complex calls.
 pub const RPC_DEFAULT_GAS_CAP: GasCap = GasCap(50_000_000);
 
@@ -496,5 +505,5 @@ struct EthApiInner<Provider, Pool, Network, EvmConfig> {
     /// The type that defines how to configure the EVM
     evm_config: EvmConfig,
     /// Allows forwarding received raw transactions
-    raw_transaction_forwarder: Option<Arc<dyn RawTransactionForwarder>>,
+    raw_transaction_forwarder: parking_lot::RwLock<Option<Arc<dyn RawTransactionForwarder>>>,
 }

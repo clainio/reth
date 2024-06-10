@@ -2,7 +2,8 @@
 
 use reth_codecs::Compact;
 use reth_config::config::EtlConfig;
-use reth_db::{database::Database, tables, transaction::DbTxMut, DatabaseError};
+use reth_db::tables;
+use reth_db_api::{database::Database, transaction::DbTxMut, DatabaseError};
 use reth_etl::Collector;
 use reth_primitives::{
     stage::{StageCheckpoint, StageId},
@@ -196,7 +197,7 @@ pub fn insert_state<'a, 'b, DB: Database>(
         state_init,
         all_reverts_init,
         contracts.into_iter().collect(),
-        Receipts::new(),
+        Receipts::default(),
         block,
     );
 
@@ -522,12 +523,12 @@ struct GenesisAccountWithAddress {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reth_db::{
+    use reth_db::DatabaseEnv;
+    use reth_db_api::{
         cursor::DbCursorRO,
         models::{storage_sharded_key::StorageShardedKey, ShardedKey},
         table::{Table, TableRow},
         transaction::DbTx,
-        DatabaseEnv,
     };
     use reth_primitives::{
         Chain, Genesis, IntegerList, GOERLI, GOERLI_GENESIS_HASH, MAINNET, MAINNET_GENESIS_HASH,
@@ -582,7 +583,7 @@ mod tests {
         let genesis_hash = init_genesis(ProviderFactory::new(
             factory.into_db(),
             MAINNET.clone(),
-            StaticFileProvider::read_write(static_file_provider.path()).unwrap(),
+            static_file_provider,
         ));
 
         assert_eq!(
