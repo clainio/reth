@@ -24,6 +24,7 @@ reth-db = { workspace = true, features = ["mdbx"] }
 reth-db-api.workspace = true
 reth-rpc-engine-api.workspace = true
 reth-rpc.workspace = true
+reth-rpc-builder.workspace = true
 reth-rpc-layer.workspace = true
 reth-node-api.workspace = true
 reth-node-core.workspace = true
@@ -54,10 +55,10 @@ tokio = { workspace = true, features = [
 ] }
 tokio-stream.workspace = true
 
-# ethereum
+## ethereum
 discv5.workspace = true
 
-# crypto
+## crypto
 secp256k1 = { workspace = true, features = [
     "global-context",
     "rand-std",
