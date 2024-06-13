@@ -5,7 +5,7 @@ use jsonrpsee::{core::RpcResult as Result, types::ErrorObjectOwned};
 use reth_consensus_common::calc::{base_block_reward, block_reward};
 use reth_evm::ConfigureEvm;
 use reth_network_api::NetworkInfo;
-use reth_primitives::{public_key_to_address, Address, BlockId, BlockNumberOrTag, Bytes, Signature, B256, B64, U256, U64};
+use reth_primitives::{Address, BlockId, BlockNumberOrTag, Bytes, B256, B64, U256, U64};
 use reth_provider::{
     BlockIdReader, BlockReader, BlockReaderIdExt, ChainSpecProvider, EvmEnvProvider,
     HeaderProvider, StateProviderFactory,
@@ -15,13 +15,11 @@ use reth_rpc_types::{
     serde_helpers::JsonStorageKey, state::StateOverride, trace::parity::{RewardAction, RewardType}, AccessListWithGasUsed, AnyTransactionReceipt, Block, BlockOverrides, BlockTransactions, Bundle, EIP1186AccountProofResponse, EthCallResponse, FeeHistory, Header, Index, Rich, RichBlock, StateContext, SyncStatus, TransactionRequest, Work
 };
 use reth_transaction_pool::TransactionPool;
-use revm_primitives::{hex::ToHexExt, FixedBytes, HashSet};
+use revm_primitives::{hex::{self}, FixedBytes, HashSet};
 use serde_json::Value;
 use tracing::trace;
 use alloy_consensus::TxEnvelope;
 use alloy_primitives::Signature as Alloy_Signature;
-
-use ::secp256k1::PublicKey;
 
 use crate::{
     eth::{
@@ -200,14 +198,15 @@ where
                if trx.hash != trace.transaction_hash{
                 let trx_trace_hash_error = ErrorObjectOwned::owned(
                     2,
-                    "Mismatch between transaction hash and coresponding trace hash",
+                    format!("Mismatch between transaction hash and coresponding trace hash {}", trx.hash),
                     None::<()> 
                 );
                 return Err(trx_trace_hash_error)    
                }
 
-               let mut pub_key: Option<PublicKey> = None;
-               
+               let mut alloy_public_key = String::new();
+               let mut check_address:Address = Default::default();
+
                match TxEnvelope::try_from(trx.clone()) {
                    Ok(tx_envelope) => {
                         let tx_message_hash: Option<FixedBytes<32>>;
@@ -243,38 +242,38 @@ where
                     if tx_sig.is_none() || tx_message_hash.is_none(){
                         let trx_sig_error = ErrorObjectOwned::owned(
                             1,
-                            "Signature not extracted from transaction",
+                            format!("Signature not extracted from transaction {}", trx.hash),
                             None::<()> 
                         );
                         return Err(trx_sig_error)    
                     }
                     
-                    let reth_signature = Signature{
-                        r: tx_sig.unwrap().r(),
-                        s: tx_sig.unwrap().s(),
-                        odd_y_parity: tx_sig.unwrap().v().y_parity(),
-                    };
+                    let alloy_sig = tx_sig.unwrap().recover_from_prehash(&tx_message_hash.unwrap());
+                    match alloy_sig{
+                        Ok(signature) =>{
+                            let ec = signature.to_encoded_point(true);
 
-                    pub_key = reth_signature.recover_pubkey(tx_message_hash.unwrap());
-
-                    if pub_key.is_none(){
-                        let trx_pub_key_error = ErrorObjectOwned::owned(
-                            1,
-                            "Public key not extracted from transaction",
-                            None::<()> 
-                        );
-                        return Err(trx_pub_key_error)
+                            check_address = Address::from_public_key(&signature);
+                            alloy_public_key = format!("0x{}", hex::encode(ec.as_bytes()));
+                        }
+                        Err(p_key_err)=>{
+                            let alloy_pub_key_err = ErrorObjectOwned::owned(
+                                1,
+                                format!("Public key not extracted from message and signature, error: {}, transaction hash: {}"
+                                , p_key_err, trx.hash),
+                                None::<()>
+                            );
+                            return Err(alloy_pub_key_err);
+                        }
                     }
-
-                    }
+                }
                 Err(e) => {
                     // Handle conversion error
                     println!("Conversion error: {:?}", e);
                 }
-                }
+            }
 
-                let recovered_address = public_key_to_address(pub_key.unwrap());
-                if recovered_address != trx.from{
+                if check_address != trx.from{
                     let trx_pub_key_addr_error = ErrorObjectOwned::owned(
                         1,
                         format!("Address doesn't match public key to address for {}", trx.hash),
@@ -283,11 +282,9 @@ where
                     return Err(trx_pub_key_addr_error)
                 }
 
-                let compressed_pub_key = pub_key.unwrap().serialize().encode_hex();
-
                 enriched_trxs.push(data::EnrichedTransaction{
                         inner: trx,
-                        public_key: format!("0x{}", compressed_pub_key),
+                        public_key: alloy_public_key,
                         receipts: receipt,
                         trace : trace.full_trace
                 })
