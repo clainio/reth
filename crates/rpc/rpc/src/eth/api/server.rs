@@ -2,7 +2,9 @@
 //! Handles RPC requests for the `eth_` namespace.
 
 use jsonrpsee::{core::RpcResult as Result, types::ErrorObjectOwned};
-use reth_consensus_common::calc::{base_block_reward, block_reward};
+use super::EthApiSpec;
+
+use alloy_dyn_abi::TypedData;
 use reth_evm::ConfigureEvm;
 use reth_network_api::NetworkInfo;
 use reth_primitives::{Address, BlockId, BlockNumberOrTag, Bytes, B256, B64, U256, U64};
@@ -12,11 +14,19 @@ use reth_provider::{
 };
 use reth_rpc_api::{data::{EnrichedBlock, EnrichedTransaction}, EthApiServer};
 use reth_rpc_types::{
-    serde_helpers::JsonStorageKey, state::StateOverride, trace::parity::{RewardAction, RewardType}, AccessListWithGasUsed, AnyTransactionReceipt, Block, BlockOverrides, BlockTransactions, Bundle, EIP1186AccountProofResponse, EthCallResponse, FeeHistory, Header, Index, Rich, RichBlock, StateContext, SyncStatus, TransactionRequest, Work
+    serde_helpers::JsonStorageKey,
+    state::{EvmOverrides, StateOverride},
+    AccessListWithGasUsed,
+    AnyTransactionReceipt,
+    Block, BlockOverrides, BlockTransactions, Bundle,
+    EIP1186AccountProofResponse,
+    EthCallResponse,
+    FeeHistory,
+    Header, Index, Rich, RichBlock,
+    StateContext, SyncStatus, TransactionRequest, Work
 };
 use reth_transaction_pool::TransactionPool;
 use revm_primitives::{hex::{self}, FixedBytes, HashSet};
-use serde_json::Value;
 use tracing::trace;
 use alloy_consensus::TxEnvelope;
 use alloy_primitives::Signature as Alloy_Signature;
@@ -25,12 +35,10 @@ use crate::{
     eth::{
         api::{EthApi, EthTransactions},
         error::EthApiError,
-        revm_utils::EvmOverrides,
     },
-    result::{internal_rpc_err, ToRpcResult}, trace::reward_trace,
+    result::{internal_rpc_err, ToRpcResult}
 };
 
-use super::EthApiSpec;
 
 use reth_rpc_api::data;
 use reth_rpc_types::trace::parity::TraceType;
@@ -125,41 +133,11 @@ where
         let f_block = self.block_by_id(BlockId::Number(number));
         let block_repr = futures::try_join!(f_block)?;
 
-        if let (Some(block_repr_data),) = block_repr{
-            if let Ok(Some(header_td)) = self.provider().header_td(&block_repr_data.header.hash()) {
-                if let Some(base_block_reward) = base_block_reward(
-                    self.provider().chain_spec().as_ref(),
-                    block_repr_data.header.number,
-                    block_repr_data.header.difficulty,
-                    header_td,
-                ) {
-                    block_reward_traces.push(reward_trace(
-                        &block_repr_data.header,
-                        RewardAction {
-                            author: block_repr_data.header.beneficiary,
-                            reward_type: RewardType::Block,
-                            value: U256::from(base_block_reward),
-                        },
-                    ));
-
-                    if !block_repr_data.ommers.is_empty() {
-                        block_reward_traces.push(reward_trace(
-                            &block_repr_data.header,
-                            RewardAction {
-                                author: block_repr_data.header.beneficiary,
-                                reward_type: RewardType::Uncle,
-                                value: U256::from(
-                                    block_reward(base_block_reward, block_repr_data.ommers.len()) -
-                                        base_block_reward,
-                                ),
-                            },
-                        ));
-                    }
-                }
-            }
-
+        if let (Some(block_repr_data), ) = block_repr{
+            let rewards_tracer = self.tracer.clone().unwrap();
+            block_reward_traces = rewards_tracer.get_block_rewards(&block_repr_data).await?.unwrap();
         }
-        // static block rewards
+        //static block rewards
 
         let block: Rich<Block> = EthApi::rpc_block(self, number, true).await?.unwrap();
         let RichBlock{
@@ -603,7 +581,7 @@ where
     /// Handler for: `eth_sign`
     async fn sign(&self, address: Address, message: Bytes) -> Result<Bytes> {
         trace!(target: "rpc::eth", ?address, ?message, "Serving eth_sign");
-        Ok(Self::sign(self, address, message).await?)
+        Ok(Self::sign(self, address, &message).await?)
     }
 
     /// Handler for: `eth_signTransaction`
@@ -612,9 +590,9 @@ where
     }
 
     /// Handler for: `eth_signTypedData`
-    async fn sign_typed_data(&self, address: Address, data: Value) -> Result<Bytes> {
+    async fn sign_typed_data(&self, address: Address, data: TypedData) -> Result<Bytes> {
         trace!(target: "rpc::eth", ?address, ?data, "Serving eth_signTypedData");
-        Ok(Self::sign_typed_data(self, data, address)?)
+        Ok(Self::sign_typed_data(self, &data, address)?)
     }
 
     /// Handler for: `eth_getProof`
@@ -646,11 +624,12 @@ mod tests {
         EthApi,
     };
     use jsonrpsee::types::error::INVALID_PARAMS_CODE;
+    use reth_chainspec::BaseFeeParams;
     use reth_evm_ethereum::EthEvmConfig;
     use reth_network_api::noop::NoopNetwork;
     use reth_primitives::{
-        constants::ETHEREUM_BLOCK_GAS_LIMIT, BaseFeeParams, Block, BlockNumberOrTag, Header,
-        TransactionSigned, B256, U64,
+        constants::ETHEREUM_BLOCK_GAS_LIMIT, Block, BlockNumberOrTag, Header, TransactionSigned,
+        B256, U64,
     };
     use reth_provider::{
         test_utils::{MockEthProvider, NoopProvider},

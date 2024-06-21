@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 # reth
+reth-chainspec.workspace = true
 reth-primitives.workspace = true
 reth-net-common.workspace = true
 reth-network-api.workspace = true
@@ -82,7 +83,7 @@ reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 
 # alloy deps for testing against nodes
 alloy-node-bindings.workspace = true
-alloy-provider.workspace = true
+alloy-provider= { workspace = true, features = ["admin-api"] }
 
 # misc
 serial_test.workspace = true
@@ -94,9 +95,9 @@ criterion = { workspace = true, features = ["async_tokio", "html_reports"] }
 
 [features]
 default = ["serde"]
+geth-tests = []
 serde = ["dep:serde", "dep:humantime-serde", "secp256k1/serde", "enr/serde", "dep:serde_json"]
 test-utils = ["reth-provider/test-utils", "dep:tempfile", "reth-transaction-pool/test-utils"]
-geth-tests = []
 
 [[bench]]
 name = "bench"

@@ -1,7 +1,8 @@
 //! Clap parser utilities
 
+use reth_chainspec::{AllGenesisFormats, ChainSpec};
 use reth_fs_util as fs;
-use reth_primitives::{AllGenesisFormats, BlockHashOrNumber, ChainSpec, B256};
+use reth_primitives::{BlockHashOrNumber, B256};
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs},
     path::PathBuf,
@@ -10,13 +11,13 @@ use std::{
     time::Duration,
 };
 
-use reth_primitives::DEV;
+use reth_chainspec::DEV;
 
 #[cfg(feature = "optimism")]
-use reth_primitives::{BASE_MAINNET, BASE_SEPOLIA, OP_MAINNET, OP_SEPOLIA};
+use reth_chainspec::{BASE_MAINNET, BASE_SEPOLIA, OP_MAINNET, OP_SEPOLIA};
 
 #[cfg(not(feature = "optimism"))]
-use reth_primitives::{GOERLI, HOLESKY, MAINNET, SEPOLIA};
+use reth_chainspec::{GOERLI, HOLESKY, MAINNET, SEPOLIA};
 
 #[cfg(feature = "optimism")]
 /// Chains supported by op-reth. First value should be used as the default.
@@ -29,35 +30,6 @@ pub const SUPPORTED_CHAINS: &[&str] = &["mainnet", "sepolia", "goerli", "holesky
 pub fn parse_duration_from_secs(arg: &str) -> eyre::Result<Duration, std::num::ParseIntError> {
     let seconds = arg.parse()?;
     Ok(Duration::from_secs(seconds))
-}
-
-/// Clap value parser for [`ChainSpec`]s that takes either a built-in chainspec or the path
-/// to a custom one.
-pub fn chain_spec_value_parser(s: &str) -> eyre::Result<Arc<ChainSpec>, eyre::Error> {
-    Ok(match s {
-        #[cfg(not(feature = "optimism"))]
-        "mainnet" => MAINNET.clone(),
-        #[cfg(not(feature = "optimism"))]
-        "goerli" => GOERLI.clone(),
-        #[cfg(not(feature = "optimism"))]
-        "sepolia" => SEPOLIA.clone(),
-        #[cfg(not(feature = "optimism"))]
-        "holesky" => HOLESKY.clone(),
-        #[cfg(not(feature = "optimism"))]
-        "dev" => DEV.clone(),
-        #[cfg(feature = "optimism")]
-        "optimism" => OP_MAINNET.clone(),
-        #[cfg(feature = "optimism")]
-        "optimism_sepolia" | "optimism-sepolia" => OP_SEPOLIA.clone(),
-        #[cfg(feature = "optimism")]
-        "base" => BASE_MAINNET.clone(),
-        #[cfg(feature = "optimism")]
-        "base_sepolia" | "base-sepolia" => BASE_SEPOLIA.clone(),
-        _ => {
-            let raw = fs::read_to_string(PathBuf::from(shellexpand::full(s)?.into_owned()))?;
-            serde_json::from_str(&raw)?
-        }
-    })
 }
 
 /// The help info for the --chain flag
@@ -167,17 +139,16 @@ pub fn parse_socket_address(value: &str) -> eyre::Result<SocketAddr, SocketAddre
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_genesis::{ChainConfig, Genesis, GenesisAccount};
     use proptest::prelude::Rng;
-    use reth_primitives::{
-        hex, Address, ChainConfig, ChainSpecBuilder, Genesis, GenesisAccount, U256,
-    };
+    use reth_chainspec::ChainSpecBuilder;
+    use reth_primitives::{hex, Address, U256};
     use secp256k1::rand::thread_rng;
     use std::collections::HashMap;
 
     #[test]
     fn parse_known_chain_spec() {
         for chain in SUPPORTED_CHAINS {
-            chain_spec_value_parser(chain).unwrap();
             genesis_value_parser(chain).unwrap();
         }
     }

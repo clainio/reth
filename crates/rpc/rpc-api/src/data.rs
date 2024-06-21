@@ -4,7 +4,6 @@ use alloy_rpc_types;
 use alloy_rpc_types_trace::parity::LocalizedTransactionTrace;
 
 use crate::data::alloy_rpc_types::Block;
-pub use alloy_rpc_types::other::OtherFields;
 
 use alloy_rpc_types_trace::parity::TraceResults;
 use reth_rpc_types::Transaction;
