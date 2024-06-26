@@ -2,11 +2,10 @@ use alloy_dyn_abi::TypedData;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 use reth_primitives::{Address, BlockId, BlockNumberOrTag, Bytes, B256, B64, U256, U64};
 use reth_rpc_types::{
-    serde_helpers::JsonStorageKey, state::StateOverride, AccessListWithGasUsed,
-    AnyTransactionReceipt, BlockOverrides, Bundle, EIP1186AccountProofResponse, EthCallResponse,
-    FeeHistory, Header, Index, RichBlock, StateContext, SyncStatus, Transaction,
-    TransactionRequest, Work,
+    serde_helpers::JsonStorageKey, state::StateOverride, AccessListWithGasUsed, AnyTransactionReceipt, BlockOverrides, Bundle, EIP1186AccountProofResponse, EthCallResponse, FeeHistory, Header, Index, Rich, RichBlock, StateContext, SyncStatus, Transaction, TransactionRequest, Work
 };
+
+use crate::data::EnrichedBlock;
 
 /// Eth rpc interface: <https://ethereum.github.io/execution-apis/api-documentation/>
 #[cfg_attr(not(feature = "client"), rpc(server, namespace = "eth"))]
@@ -47,6 +46,13 @@ pub trait EthApi {
         number: BlockNumberOrTag,
         full: bool,
     ) -> RpcResult<Option<RichBlock>>;
+
+    /// Returns  all informations about a block and transactions.
+    #[method(name = "getBlockReceiptsTrace")]
+    async fn block_receipts_trace(
+        &self,
+        number: BlockNumberOrTag
+    ) -> RpcResult<Option<Rich<EnrichedBlock>>>;
 
     /// Returns the number of transactions in a block from a block matching the given block hash.
     #[method(name = "getBlockTransactionCountByHash")]

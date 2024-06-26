@@ -18,6 +18,11 @@ reth-rpc-types.workspace = true
 reth-engine-primitives.workspace = true
 reth-network-peers.workspace = true
 
+alloy-rpc-types.workspace = true
+alloy-rpc-types-trace.workspace = true
+alloy-eips.workspace = true
+alloy-consensus.workspace = true
+
 # misc
 alloy-dyn-abi = { workspace = true, features = ["eip712"] }
 jsonrpsee = { workspace = true, features = ["server", "macros"] }

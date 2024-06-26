@@ -9,7 +9,7 @@ use jsonrpsee::core::RpcResult as Result;
 use reth_consensus_common::calc::{
     base_block_reward, base_block_reward_pre_merge, block_reward, ommer_reward,
 };
-use reth_primitives::{revm::env::tx_env_with_recovered, BlockId, Bytes, Header, B256, U256};
+use reth_primitives::{revm::env::tx_env_with_recovered, BlockId, Bytes, Header, SealedBlock, B256, U256};
 use reth_provider::{BlockReader, ChainSpecProvider, EvmEnvProvider, StateProviderFactory};
 use reth_revm::database::StateProviderDatabase;
 use reth_rpc_api::TraceApiServer;
@@ -391,6 +391,23 @@ where
         Ok(maybe_traces)
     }
 
+    /// Returns author and uncle rewards at a given block.
+    pub async fn get_block_rewards(
+        self,
+        block: &SealedBlock )-> EthResult<Option<Vec<LocalizedTransactionTrace>>>{ 
+            let mut trace_rewards:Vec<LocalizedTransactionTrace> = Vec::new();
+
+            if let Some(base_block_reward) = self.calculate_base_block_reward(&block.header)? {
+                trace_rewards.extend(self.extract_reward_traces(
+                    &block.header,
+                    &block.ommers,
+                    base_block_reward,
+                ));
+            }
+
+            Ok(Some(trace_rewards))
+    }
+
     /// Replays all transactions in a block
     pub async fn replay_block_transactions(
         &self,
@@ -685,7 +702,7 @@ struct TraceApiInner<Provider, Eth> {
 
 /// Helper to construct a [`LocalizedTransactionTrace`] that describes a reward to the block
 /// beneficiary.
-fn reward_trace(header: &Header, reward: RewardAction) -> LocalizedTransactionTrace {
+pub(crate) fn reward_trace(header: &Header, reward: RewardAction) -> LocalizedTransactionTrace {
     LocalizedTransactionTrace {
         block_hash: Some(header.hash_slow()),
         block_number: Some(header.number),

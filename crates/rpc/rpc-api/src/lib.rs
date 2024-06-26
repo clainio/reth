@@ -34,6 +34,7 @@ mod trace;
 mod txpool;
 mod validation;
 mod web3;
+pub mod data;
 
 /// re-export of all server traits
 pub use servers::*;

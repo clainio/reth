@@ -1,7 +1,7 @@
 //! The entire implementation of the namespace is quite large, hence it is divided across several
 //! files.
 
-use crate::eth::{
+use crate::{eth::{
     api::{
         fee_history::FeeHistoryCache,
         pending_block::{PendingBlock, PendingBlockEnv, PendingBlockEnvOrigin},
@@ -10,8 +10,10 @@ use crate::eth::{
     error::{EthApiError, EthResult},
     gas_oracle::GasPriceOracle,
     signer::EthSigner,
-    traits::RawTransactionForwarder,
+    traits::RawTransactionForwarder},  
+TraceApi
 };
+
 use async_trait::async_trait;
 use reth_chainspec::ChainInfo;
 use reth_errors::{RethError, RethResult};
@@ -86,6 +88,8 @@ pub trait EthApiSpec: EthTransactions + Send + Sync {
 pub struct EthApi<Provider, Pool, Network, EvmConfig> {
     /// All nested fields bundled together.
     inner: Arc<EthApiInner<Provider, Pool, Network, EvmConfig>>,
+    ///for trace rpc
+    pub tracer: Option<TraceApi<Provider, EthApi<Provider, Pool, Network, EvmConfig>>>
 }
 
 impl<Provider, Pool, Network, EvmConfig> EthApi<Provider, Pool, Network, EvmConfig> {
@@ -170,7 +174,8 @@ where
             raw_transaction_forwarder: parking_lot::RwLock::new(raw_transaction_forwarder),
         };
 
-        Self { inner: Arc::new(inner) }
+
+        Self { inner: Arc::new(inner), tracer: None }
     }
 
     /// Executes the future on a new blocking task.
@@ -382,7 +387,8 @@ impl<Provider, Pool, Events, EvmConfig> std::fmt::Debug
 
 impl<Provider, Pool, Events, EvmConfig> Clone for EthApi<Provider, Pool, Events, EvmConfig> {
     fn clone(&self) -> Self {
-        Self { inner: Arc::clone(&self.inner) }
+        Self { inner: Arc::clone(&self.inner),
+            tracer: self.tracer.clone() }
     }
 }
 
