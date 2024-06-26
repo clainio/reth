@@ -127,7 +127,7 @@ where
                 trace_res
         });
 
-        //static block rewards
+        //static + uncles inclusion block rewards
         let mut block_reward_traces =  Vec::new();
 
         let f_block = self.block_by_id(BlockId::Number(number));
@@ -137,7 +137,7 @@ where
             let rewards_tracer = self.tracer.clone().unwrap();
             block_reward_traces = rewards_tracer.get_block_rewards(&block_repr_data).await?.unwrap();
         }
-        //static block rewards
+        //static + uncles inclusion block rewards
 
         let block: Rich<Block> = EthApi::rpc_block(self, number, true).await?.unwrap();
         let RichBlock{
