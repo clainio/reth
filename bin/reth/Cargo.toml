@@ -39,7 +39,7 @@ reth-rpc-types-compat.workspace = true
 reth-rpc-api = { workspace = true, features = ["client"] }
 reth-network = { workspace = true, features = ["serde"] }
 reth-network-p2p.workspace = true
-reth-net-common.workspace = true
+reth-net-banlist.workspace = true
 reth-network-api.workspace = true
 reth-downloaders.workspace = true
 reth-tracing.workspace = true
@@ -86,12 +86,14 @@ metrics-process.workspace = true
 
 # test vectors generation
 proptest.workspace = true
+arbitrary.workspace = true
+proptest-arbitrary-interop.workspace = true
 rand.workspace = true
 
 # tui
-comfy-table = "7.0"
+comfy-table = "7.1"
 crossterm = "0.27.0"
-ratatui = { version = "0.26", default-features = false, features = [
+ratatui = { version = "0.27", default-features = false, features = [
     "crossterm",
 ] }
 human_bytes = "0.4.1"
