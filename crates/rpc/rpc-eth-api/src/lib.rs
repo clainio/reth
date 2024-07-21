@@ -17,6 +17,7 @@ pub mod core;
 pub mod filter;
 pub mod helpers;
 pub mod pubsub;
+pub mod data;
 
 pub use bundle::{EthBundleApiServer, EthCallBundleApiServer};
 pub use core::{EthApiServer, FullEthApiServer};
