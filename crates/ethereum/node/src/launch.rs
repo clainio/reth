@@ -2,10 +2,10 @@
 
 use futures::{future::Either, stream, stream_select, StreamExt};
 use reth_beacon_consensus::{
-    hooks::{EngineHooks, PruneHook, StaticFileHook},
+    hooks::{EngineHooks, StaticFileHook},
     BeaconConsensusEngineHandle,
 };
-use reth_ethereum_engine::service::EthService;
+use reth_ethereum_engine::service::{ChainEvent, EthService};
 use reth_ethereum_engine_primitives::EthEngineTypes;
 use reth_exex::ExExManagerHandle;
 use reth_network::NetworkEvents;
@@ -29,7 +29,6 @@ use reth_rpc_types::engine::ClientVersionV1;
 use reth_tasks::TaskExecutor;
 use reth_tokio_util::EventSender;
 use reth_tracing::tracing::{debug, info};
-use std::sync::mpsc::channel;
 use tokio::sync::{mpsc::unbounded_channel, oneshot};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
@@ -159,34 +158,29 @@ where
 
         let pruner_events = pruner.events();
         info!(target: "reth::cli", prune_config=?ctx.prune_config().unwrap_or_default(), "Pruner initialized");
-        hooks.add(PruneHook::new(pruner, Box::new(ctx.task_executor().clone())));
-
-        let (to_tree_tx, _to_tree_rx) = channel();
-        let (_from_tree_tx, from_tree_rx) = unbounded_channel();
 
         // Configure the consensus engine
-        let eth_service = EthService::new(
+        let mut eth_service = EthService::new(
             ctx.chain_spec(),
             network_client.clone(),
-            // to tree
-            to_tree_tx,
-            // from tree
-            from_tree_rx,
             UnboundedReceiverStream::new(consensus_engine_rx),
             pipeline,
             Box::new(ctx.task_executor().clone()),
+            ctx.provider_factory().clone(),
+            ctx.blockchain_db().clone(),
+            pruner,
         );
 
         let event_sender = EventSender::default();
 
         let beacon_engine_handle =
-            BeaconConsensusEngineHandle::new(consensus_engine_tx, event_sender);
+            BeaconConsensusEngineHandle::new(consensus_engine_tx, event_sender.clone());
 
         info!(target: "reth::cli", "Consensus engine initialized");
 
         let events = stream_select!(
             ctx.components().network().event_listener().map(Into::into),
-            // TODO get engine events
+            beacon_engine_handle.event_listener().map(Into::into),
             pipeline_events.map(Into::into),
             if ctx.node_config().debug.tip.is_none() && !ctx.is_dev() {
                 Either::Left(
@@ -243,8 +237,18 @@ where
         let (tx, rx) = oneshot::channel();
         info!(target: "reth::cli", "Starting consensus engine");
         ctx.task_executor().spawn_critical_blocking("consensus engine", async move {
-            let res = eth_service.await;
-            let _ = tx.send(res);
+            // advance the chain and handle events
+            while let Some(event) = eth_service.next().await {
+                debug!(target: "reth::cli", "Event: {event:?}");
+                match event {
+                    ChainEvent::BackfillSyncFinished | ChainEvent::BackfillSyncStarted => {}
+                    ChainEvent::FatalError => break,
+                    ChainEvent::Handler(ev) => {
+                        event_sender.notify(ev);
+                    }
+                }
+            }
+            let _ = tx.send(());
         });
 
         let full_node = FullNode {
@@ -265,7 +269,7 @@ where
 
         let handle = NodeHandle {
             node_exit_future: NodeExitFuture::new(
-                async { Ok(rx.await??) },
+                async { Ok(rx.await?) },
                 full_node.config.debug.terminate,
             ),
             node: full_node,

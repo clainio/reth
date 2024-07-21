@@ -1001,7 +1001,7 @@ impl<TX: DbTxMut + DbTx> DatabaseProvider<TX> {
                 }
 
                 // insert value if needed
-                if *old_storage_value != U256::ZERO {
+                if !old_storage_value.is_zero() {
                     plain_storage_cursor.upsert(*address, storage_entry)?;
                 }
             }
@@ -1099,7 +1099,7 @@ impl<TX: DbTxMut + DbTx> DatabaseProvider<TX> {
                 }
 
                 // insert value if needed
-                if *old_storage_value != U256::ZERO {
+                if !old_storage_value.is_zero() {
                     plain_storage_cursor.upsert(*address, storage_entry)?;
                 }
             }
@@ -1948,7 +1948,7 @@ impl<TX: DbTx> BlockNumReader for DatabaseProvider<TX> {
 
 impl<TX: DbTx> BlockReader for DatabaseProvider<TX> {
     fn find_block_by_hash(&self, hash: B256, source: BlockSource) -> ProviderResult<Option<Block>> {
-        if source.is_database() {
+        if source.is_canonical() {
             self.block(hash.into())
         } else {
             Ok(None)
@@ -2508,6 +2508,14 @@ impl<TX: DbTx> StageCheckpointReader for DatabaseProvider<TX> {
         Ok(self.tx.get::<tables::StageCheckpoints>(id.to_string())?)
     }
 
+    fn get_all_checkpoints(&self) -> ProviderResult<Vec<(String, StageCheckpoint)>> {
+        self.tx
+            .cursor_read::<tables::StageCheckpoints>()?
+            .walk(None)?
+            .collect::<Result<Vec<(String, StageCheckpoint)>, _>>()
+            .map_err(ProviderError::Database)
+    }
+
     /// Get stage checkpoint progress.
     fn get_stage_checkpoint_progress(&self, id: StageId) -> ProviderResult<Option<Vec<u8>>> {
         Ok(self.tx.get::<tables::StageCheckpointProgresses>(id.to_string())?)
@@ -2696,7 +2704,7 @@ impl<TX: DbTxMut + DbTx> HashingWriter for DatabaseProvider<TX> {
                 hashed_storage.delete_current()?;
             }
 
-            if value != U256::ZERO {
+            if !value.is_zero() {
                 hashed_storage.upsert(hashed_address, StorageEntry { key, value })?;
             }
         }
@@ -2736,7 +2744,7 @@ impl<TX: DbTxMut + DbTx> HashingWriter for DatabaseProvider<TX> {
                     hashed_storage_cursor.delete_current()?;
                 }
 
-                if value != U256::ZERO {
+                if !value.is_zero() {
                     hashed_storage_cursor.upsert(hashed_address, StorageEntry { key, value })?;
                 }
                 Ok(())

@@ -4,9 +4,10 @@ use crate::{
     engine::{DownloadRequest, EngineApiEvent, FromEngine},
     persistence::PersistenceHandle,
 };
-use parking_lot::RwLock;
+pub use memory_overlay::MemoryOverlayStateProvider;
 use reth_beacon_consensus::{
-    BeaconEngineMessage, ForkchoiceStateTracker, InvalidHeaderCache, OnForkChoiceUpdated,
+    BeaconConsensusEngineEvent, BeaconEngineMessage, ForkchoiceStateTracker, InvalidHeaderCache,
+    OnForkChoiceUpdated,
 };
 use reth_blockchain_tree::{
     error::InsertBlockErrorKind, BlockAttachment, BlockBuffer, BlockStatus,
@@ -23,8 +24,7 @@ use reth_primitives::{
     SealedBlockWithSenders, SealedHeader, B256, U256,
 };
 use reth_provider::{
-    providers::ChainInfoTracker, BlockReader, ExecutionOutcome, StateProvider,
-    StateProviderFactory, StateRootProvider,
+    BlockReader, ExecutionOutcome, StateProvider, StateProviderFactory, StateRootProvider,
 };
 use reth_revm::database::StateProviderDatabase;
 use reth_rpc_types::{
@@ -35,28 +35,36 @@ use reth_rpc_types::{
     ExecutionPayload,
 };
 use reth_trie::{updates::TrieUpdates, HashedPostState};
+pub use state::{BlockState, CanonicalInMemoryState, InMemoryState};
 use std::{
     collections::{BTreeMap, HashMap},
     marker::PhantomData,
     sync::{mpsc::Receiver, Arc},
 };
-use tokio::sync::{mpsc::UnboundedSender, oneshot};
+use tokio::sync::{
+    mpsc::{UnboundedReceiver, UnboundedSender},
+    oneshot,
+};
 use tracing::*;
 
 mod memory_overlay;
-pub use memory_overlay::MemoryOverlayStateProvider;
-
+mod state;
 /// Maximum number of blocks to be kept only in memory without triggering persistence.
 const PERSISTENCE_THRESHOLD: u64 = 256;
+/// Number of pending blocks that cannot be executed due to missing parent and
+/// are kept in cache.
+const DEFAULT_BLOCK_BUFFER_LIMIT: u32 = 256;
+/// Number of invalid headers to keep in cache.
+const DEFAULT_MAX_INVALID_HEADER_CACHE_LENGTH: u32 = 256;
 
 /// Represents an executed block stored in-memory.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExecutedBlock {
-    block: Arc<SealedBlock>,
-    senders: Arc<Vec<Address>>,
-    execution_output: Arc<ExecutionOutcome>,
-    hashed_state: Arc<HashedPostState>,
-    trie: Arc<TrieUpdates>,
+    pub(crate) block: Arc<SealedBlock>,
+    pub(crate) senders: Arc<Vec<Address>>,
+    pub(crate) execution_output: Arc<ExecutionOutcome>,
+    pub(crate) hashed_state: Arc<HashedPostState>,
+    pub(crate) trie: Arc<TrieUpdates>,
 }
 
 impl ExecutedBlock {
@@ -104,7 +112,7 @@ pub struct TreeState {
     /// Executed blocks grouped by their respective block number.
     blocks_by_number: BTreeMap<BlockNumber, Vec<ExecutedBlock>>,
     /// Pending state not yet applied
-    pending: Option<Arc<State>>,
+    pending: Option<Arc<BlockState>>,
     /// Block number and hash of the current head.
     current_head: Option<(BlockNumber, B256)>,
 }
@@ -151,111 +159,6 @@ impl TreeState {
     /// Returns the maximum block number stored.
     pub(crate) fn max_block_number(&self) -> BlockNumber {
         *self.blocks_by_number.last_key_value().unwrap_or((&BlockNumber::default(), &vec![])).0
-    }
-}
-
-/// Container type for in memory state data.
-#[derive(Debug, Default)]
-pub struct InMemoryStateImpl {
-    blocks: RwLock<HashMap<B256, Arc<State>>>,
-    numbers: RwLock<HashMap<u64, B256>>,
-    pending: RwLock<Option<State>>,
-}
-
-impl InMemoryStateImpl {
-    const fn new(
-        blocks: HashMap<B256, Arc<State>>,
-        numbers: HashMap<u64, B256>,
-        pending: Option<State>,
-    ) -> Self {
-        Self {
-            blocks: RwLock::new(blocks),
-            numbers: RwLock::new(numbers),
-            pending: RwLock::new(pending),
-        }
-    }
-}
-
-impl InMemoryState for InMemoryStateImpl {
-    fn state_by_hash(&self, hash: B256) -> Option<Arc<State>> {
-        self.blocks.read().get(&hash).cloned()
-    }
-
-    fn state_by_number(&self, number: u64) -> Option<Arc<State>> {
-        self.numbers.read().get(&number).and_then(|hash| self.blocks.read().get(hash).cloned())
-    }
-
-    fn head_state(&self) -> Option<Arc<State>> {
-        self.numbers
-            .read()
-            .iter()
-            .max_by_key(|(&number, _)| number)
-            .and_then(|(_, hash)| self.blocks.read().get(hash).cloned())
-    }
-
-    fn pending_state(&self) -> Option<Arc<State>> {
-        self.pending.read().as_ref().map(|state| Arc::new(State(state.0.clone())))
-    }
-}
-
-/// Inner type to provide in memory state. It includes a chain tracker to be
-/// advanced internally by the tree.
-#[derive(Debug)]
-struct CanonicalInMemoryStateInner {
-    chain_info_tracker: ChainInfoTracker,
-    in_memory_state: InMemoryStateImpl,
-}
-
-/// This type is responsible for providing the blocks, receipts, and state for
-/// all canonical blocks not on disk yet and keeps track of the block range that
-/// is in memory.
-#[derive(Debug, Clone)]
-pub struct CanonicalInMemoryState {
-    inner: Arc<CanonicalInMemoryStateInner>,
-}
-
-impl CanonicalInMemoryState {
-    fn new(
-        blocks: HashMap<B256, Arc<State>>,
-        numbers: HashMap<u64, B256>,
-        pending: Option<State>,
-    ) -> Self {
-        let in_memory_state = InMemoryStateImpl::new(blocks, numbers, pending);
-        let head_state = in_memory_state.head_state();
-        let header = match head_state {
-            Some(state) => state.block().block().header.clone(),
-            None => SealedHeader::default(),
-        };
-        let chain_info_tracker = ChainInfoTracker::new(header);
-        let inner = CanonicalInMemoryStateInner { chain_info_tracker, in_memory_state };
-
-        Self { inner: Arc::new(inner) }
-    }
-
-    fn with_header(header: SealedHeader) -> Self {
-        let chain_info_tracker = ChainInfoTracker::new(header);
-        let in_memory_state = InMemoryStateImpl::default();
-        let inner = CanonicalInMemoryStateInner { chain_info_tracker, in_memory_state };
-
-        Self { inner: Arc::new(inner) }
-    }
-}
-
-impl InMemoryState for CanonicalInMemoryState {
-    fn state_by_hash(&self, hash: B256) -> Option<Arc<State>> {
-        self.inner.in_memory_state.state_by_hash(hash)
-    }
-
-    fn state_by_number(&self, number: u64) -> Option<Arc<State>> {
-        self.inner.in_memory_state.state_by_number(number)
-    }
-
-    fn head_state(&self) -> Option<Arc<State>> {
-        self.inner.in_memory_state.head_state()
-    }
-
-    fn pending_state(&self) -> Option<Arc<State>> {
-        self.inner.in_memory_state.pending_state()
     }
 }
 
@@ -381,8 +284,8 @@ pub struct EngineApiTreeHandlerImpl<P, E, T: EngineTypes> {
     outgoing: UnboundedSender<EngineApiEvent>,
     persistence: PersistenceHandle,
     persistence_state: PersistenceState,
-    /// (tmp) The flag indicating whether the pipeline is active.
-    is_pipeline_active: bool,
+    /// Flag indicating whether the node is currently syncing via backfill.
+    is_backfill_active: bool,
     canonical_in_memory_state: CanonicalInMemoryState,
     _marker: PhantomData<T>,
 }
@@ -391,10 +294,10 @@ impl<P, E, T> EngineApiTreeHandlerImpl<P, E, T>
 where
     P: BlockReader + StateProviderFactory + Clone + 'static,
     E: BlockExecutorProvider,
-    T: EngineTypes + 'static,
+    T: EngineTypes,
 {
     #[allow(clippy::too_many_arguments)]
-    fn new(
+    pub fn new(
         provider: P,
         executor_provider: E,
         consensus: Arc<dyn Consensus>,
@@ -414,32 +317,41 @@ where
             outgoing,
             persistence,
             persistence_state: PersistenceState::default(),
-            is_pipeline_active: false,
+            is_backfill_active: false,
             state,
-            canonical_in_memory_state: CanonicalInMemoryState::with_header(header),
+            canonical_in_memory_state: CanonicalInMemoryState::with_head(header),
             _marker: PhantomData,
         }
     }
 
+    /// Creates a new `EngineApiTreeHandlerImpl` instance and spawns it in its
+    /// own thread. Returns the receiver end of a `EngineApiEvent` unbounded
+    /// channel to receive events from the engine.
     #[allow(clippy::too_many_arguments)]
-    fn spawn_new(
+    pub fn spawn_new(
         provider: P,
         executor_provider: E,
         consensus: Arc<dyn Consensus>,
         payload_validator: ExecutionPayloadValidator,
         incoming: Receiver<FromEngine<BeaconEngineMessage<T>>>,
-        state: EngineApiTreeState,
-        header: SealedHeader,
         persistence: PersistenceHandle,
-    ) -> UnboundedSender<EngineApiEvent> {
-        let (outgoing, rx) = tokio::sync::mpsc::unbounded_channel();
+    ) -> UnboundedReceiver<EngineApiEvent> {
+        let (tx, outgoing) = tokio::sync::mpsc::unbounded_channel();
+        let state = EngineApiTreeState::new(
+            DEFAULT_BLOCK_BUFFER_LIMIT,
+            DEFAULT_MAX_INVALID_HEADER_CACHE_LENGTH,
+        );
+
+        let best_block_number = provider.best_block_number().unwrap_or(0);
+        let header = provider.sealed_header(best_block_number).ok().flatten().unwrap_or_default();
+
         let task = Self::new(
             provider,
             executor_provider,
             consensus,
             payload_validator,
             incoming,
-            outgoing.clone(),
+            tx,
             state,
             header,
             persistence,
@@ -448,20 +360,31 @@ where
         outgoing
     }
 
-    fn run(mut self) {
+    pub fn run(mut self) {
         while let Ok(msg) = self.incoming.recv() {
             match msg {
                 FromEngine::Event(event) => match event {
-                    FromOrchestrator::BackfillSyncFinished => {
-                        todo!()
-                    }
                     FromOrchestrator::BackfillSyncStarted => {
-                        todo!()
+                        debug!(target: "consensus::engine", "received backfill sync started event");
+                        self.is_backfill_active = true;
+                    }
+                    FromOrchestrator::BackfillSyncFinished => {
+                        debug!(target: "consensus::engine", "received backfill sync finished event");
+                        self.is_backfill_active = false;
                     }
                 },
                 FromEngine::Request(request) => match request {
                     BeaconEngineMessage::ForkchoiceUpdated { state, payload_attrs, tx } => {
                         let output = self.on_forkchoice_updated(state, payload_attrs);
+
+                        if let Ok(res) = &output {
+                            // emit an event about the handled FCU
+                            self.emit_event(BeaconConsensusEngineEvent::ForkchoiceUpdated(
+                                state,
+                                res.outcome.forkchoice_status(),
+                            ));
+                        }
+
                         if let Err(err) = tx.send(output.map(|o| o.outcome).map_err(Into::into)) {
                             error!("Failed to send event: {err:?}");
                         }
@@ -475,7 +398,8 @@ where
                         }
                     }
                     BeaconEngineMessage::TransitionConfigurationExchanged => {
-                        todo!()
+                        // this is a reporting no-op because the engine API impl does not need
+                        // additional input to handle this request
                     }
                 },
                 FromEngine::DownloadedBlocks(blocks) => {
@@ -513,6 +437,14 @@ where
                 }
             }
         }
+    }
+
+    /// Emits an outgoing event to the engine.
+    fn emit_event(&self, event: impl Into<EngineApiEvent>) {
+        let _ = self
+            .outgoing
+            .send(event.into())
+            .inspect_err(|err| error!("Failed to send internal event: {err:?}"));
     }
 
     /// Returns true if the canonical chain length minus the last persisted
@@ -818,7 +750,7 @@ where
             return Ok(Some(OnForkChoiceUpdated::with_invalid(status)))
         }
 
-        if self.is_pipeline_active {
+        if self.is_backfill_active {
             // We can only process new forkchoice updates if the pipeline is idle, since it requires
             // exclusive access to the database
             trace!(target: "consensus::engine", "Pipeline is syncing, skipping forkchoice update");
@@ -833,7 +765,7 @@ impl<P, E, T> EngineApiTreeHandler for EngineApiTreeHandlerImpl<P, E, T>
 where
     P: BlockReader + StateProviderFactory + Clone + 'static,
     E: BlockExecutorProvider,
-    T: EngineTypes + 'static,
+    T: EngineTypes,
 {
     type Engine = T;
 
@@ -910,7 +842,7 @@ where
             return Ok(TreeOutcome::new(status))
         }
 
-        let status = if self.is_pipeline_active {
+        let status = if self.is_backfill_active {
             self.buffer_block_without_senders(block).unwrap();
             PayloadStatus::from_status(PayloadStatusEnum::Syncing)
         } else {
@@ -999,64 +931,14 @@ impl PersistenceState {
     }
 }
 
-/// Represents the tree state kept in memory.
-trait InMemoryState: Send + Sync {
-    /// Returns the state for a given block hash.
-    fn state_by_hash(&self, hash: B256) -> Option<Arc<State>>;
-    /// Returns the state for a given block number.
-    fn state_by_number(&self, number: u64) -> Option<Arc<State>>;
-    /// Returns the current chain head state.
-    fn head_state(&self) -> Option<Arc<State>>;
-    /// Returns the pending state corresponding to the current head plus one,
-    /// from the payload received in newPayload that does not have a FCU yet.
-    fn pending_state(&self) -> Option<Arc<State>>;
-}
-
-/// State after applying the given block.
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct State(ExecutedBlock);
-
-impl State {
-    const fn new(executed_block: ExecutedBlock) -> Self {
-        Self(executed_block)
-    }
-
-    fn block(&self) -> ExecutedBlock {
-        self.0.clone()
-    }
-
-    fn hash(&self) -> B256 {
-        self.0.block().hash()
-    }
-
-    fn number(&self) -> u64 {
-        self.0.block().number
-    }
-
-    fn state_root(&self) -> B256 {
-        self.0.block().header.state_root
-    }
-
-    fn receipts(&self) -> &Receipts {
-        &self.0.execution_outcome().receipts
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        static_files::StaticFileAction,
-        test_utils::{
-            get_executed_block_with_number, get_executed_block_with_receipts, get_executed_blocks,
-        },
-    };
-    use rand::Rng;
+    use crate::{static_files::StaticFileAction, test_utils::get_executed_blocks};
     use reth_beacon_consensus::EthBeaconConsensus;
     use reth_chainspec::{ChainSpecBuilder, MAINNET};
     use reth_ethereum_engine_primitives::EthEngineTypes;
     use reth_evm::test_utils::MockExecutorProvider;
-    use reth_primitives::Receipt;
     use reth_provider::test_utils::MockEthProvider;
     use std::sync::mpsc::{channel, Sender};
     use tokio::sync::mpsc::unbounded_channel;
@@ -1081,7 +963,7 @@ mod tests {
             let number = sealed_block.number;
             blocks_by_hash.insert(hash, block.clone());
             blocks_by_number.entry(number).or_insert_with(Vec::new).push(block.clone());
-            state_by_hash.insert(hash, Arc::new(State(block.clone())));
+            state_by_hash.insert(hash, Arc::new(BlockState(block.clone())));
             hash_by_number.insert(number, hash);
         }
         let tree_state = TreeState { blocks_by_hash, blocks_by_number, ..Default::default() };
@@ -1128,15 +1010,11 @@ mod tests {
             persistence_handle,
         );
         let last_executed_block = blocks.last().unwrap().clone();
-        let pending = Some(State::new(last_executed_block));
+        let pending = Some(BlockState::new(last_executed_block));
         tree.canonical_in_memory_state =
             CanonicalInMemoryState::new(state_by_hash, hash_by_number, pending);
 
         TestHarness { tree, to_tree_tx, blocks, sf_action_rx }
-    }
-
-    fn create_mock_state(block_number: u64) -> State {
-        State::new(get_executed_block_with_number(block_number))
     }
 
     #[tokio::test]
@@ -1171,7 +1049,7 @@ mod tests {
         for executed_block in blocks {
             let sealed_block = executed_block.block();
 
-            let expected_state = State::new(executed_block.clone());
+            let expected_state = BlockState::new(executed_block.clone());
 
             let actual_state_by_hash = tree
                 .canonical_in_memory_state
@@ -1189,140 +1067,5 @@ mod tests {
                 .unwrap();
             assert_eq!(expected_state, *actual_state_by_number);
         }
-    }
-
-    #[tokio::test]
-    async fn test_in_memory_state_impl_state_by_hash() {
-        let mut state_by_hash = HashMap::new();
-        let number = rand::thread_rng().gen::<u64>();
-        let state = Arc::new(create_mock_state(number));
-        state_by_hash.insert(state.hash(), state.clone());
-
-        let in_memory_state = InMemoryStateImpl::new(state_by_hash, HashMap::new(), None);
-
-        assert_eq!(in_memory_state.state_by_hash(state.hash()), Some(state));
-        assert_eq!(in_memory_state.state_by_hash(B256::random()), None);
-    }
-
-    #[tokio::test]
-    async fn test_in_memory_state_impl_state_by_number() {
-        let mut state_by_hash = HashMap::new();
-        let mut hash_by_number = HashMap::new();
-
-        let number = rand::thread_rng().gen::<u64>();
-        let state = Arc::new(create_mock_state(number));
-        let hash = state.hash();
-
-        state_by_hash.insert(hash, state.clone());
-        hash_by_number.insert(number, hash);
-
-        let in_memory_state = InMemoryStateImpl::new(state_by_hash, hash_by_number, None);
-
-        assert_eq!(in_memory_state.state_by_number(number), Some(state));
-        assert_eq!(in_memory_state.state_by_number(number + 1), None);
-    }
-
-    #[tokio::test]
-    async fn test_in_memory_state_impl_head_state() {
-        let mut state_by_hash = HashMap::new();
-        let mut hash_by_number = HashMap::new();
-        let state1 = Arc::new(create_mock_state(1));
-        let state2 = Arc::new(create_mock_state(2));
-        let hash1 = state1.hash();
-        let hash2 = state2.hash();
-        hash_by_number.insert(1, hash1);
-        hash_by_number.insert(2, hash2);
-        state_by_hash.insert(hash1, state1);
-        state_by_hash.insert(hash2, state2);
-
-        let in_memory_state = InMemoryStateImpl::new(state_by_hash, hash_by_number, None);
-        let head_state = in_memory_state.head_state().unwrap();
-
-        assert_eq!(head_state.hash(), hash2);
-        assert_eq!(head_state.number(), 2);
-    }
-
-    #[tokio::test]
-    async fn test_in_memory_state_impl_pending_state() {
-        let pending_number = rand::thread_rng().gen::<u64>();
-        let pending_state = create_mock_state(pending_number);
-        let pending_hash = pending_state.hash();
-
-        let in_memory_state =
-            InMemoryStateImpl::new(HashMap::new(), HashMap::new(), Some(pending_state));
-
-        let result = in_memory_state.pending_state();
-        assert!(result.is_some());
-        let actual_pending_state = result.unwrap();
-        assert_eq!(actual_pending_state.0.block().hash(), pending_hash);
-        assert_eq!(actual_pending_state.0.block().number, pending_number);
-    }
-
-    #[tokio::test]
-    async fn test_in_memory_state_impl_no_pending_state() {
-        let in_memory_state = InMemoryStateImpl::new(HashMap::new(), HashMap::new(), None);
-
-        assert_eq!(in_memory_state.pending_state(), None);
-    }
-
-    #[tokio::test]
-    async fn test_state_new() {
-        let number = rand::thread_rng().gen::<u64>();
-        let block = get_executed_block_with_number(number);
-
-        let state = State::new(block.clone());
-
-        assert_eq!(state.0, block);
-    }
-
-    #[tokio::test]
-    async fn test_state_block() {
-        let number = rand::thread_rng().gen::<u64>();
-        let block = get_executed_block_with_number(number);
-
-        let state = State::new(block.clone());
-
-        assert_eq!(state.block(), block);
-    }
-
-    #[tokio::test]
-    async fn test_state_hash() {
-        let number = rand::thread_rng().gen::<u64>();
-        let block = get_executed_block_with_number(number);
-
-        let state = State::new(block.clone());
-
-        assert_eq!(state.hash(), block.block().hash());
-    }
-
-    #[tokio::test]
-    async fn test_state_number() {
-        let number = rand::thread_rng().gen::<u64>();
-        let block = get_executed_block_with_number(number);
-
-        let state = State::new(block);
-
-        assert_eq!(state.number(), number);
-    }
-
-    #[tokio::test]
-    async fn test_state_state_root() {
-        let number = rand::thread_rng().gen::<u64>();
-        let block = get_executed_block_with_number(number);
-
-        let state = State::new(block.clone());
-
-        assert_eq!(state.state_root(), block.block().state_root);
-    }
-
-    #[tokio::test]
-    async fn test_state_receipts() {
-        let receipts = Receipts { receipt_vec: vec![vec![Some(Receipt::default())]] };
-
-        let block = get_executed_block_with_receipts(receipts.clone());
-
-        let state = State::new(block);
-
-        assert_eq!(state.receipts(), &receipts);
     }
 }
