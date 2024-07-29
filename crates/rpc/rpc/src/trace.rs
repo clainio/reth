@@ -416,7 +416,7 @@ where
     /// Returns author and uncle rewards at a given block.
     pub async fn get_block_rewards(
        self,
-       block: &SealedBlock )-> EthResult<Option<Vec<LocalizedTransactionTrace>>>{ 
+       block: &SealedBlock )-> Result<Option<Vec<LocalizedTransactionTrace>>, Eth::Error>{ 
            let mut trace_rewards:Vec<LocalizedTransactionTrace> = Vec::new();
 
            if let Some(base_block_reward) = self.calculate_base_block_reward(&block.header)? {
