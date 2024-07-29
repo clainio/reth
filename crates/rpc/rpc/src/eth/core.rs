@@ -22,6 +22,8 @@ use reth_tasks::{
 };
 use tokio::sync::{AcquireError, Mutex, OwnedSemaphorePermit};
 
+use crate::TraceApi;
+
 /// `Eth` API implementation.
 ///
 /// This type provides the functionality for handling `eth_` related requests.
@@ -34,7 +36,10 @@ use tokio::sync::{AcquireError, Mutex, OwnedSemaphorePermit};
 #[derive(Deref)]
 pub struct EthApi<Provider, Pool, Network, EvmConfig> {
     /// All nested fields bundled together.
+    #[deref]
     pub(super) inner: Arc<EthApiInner<Provider, Pool, Network, EvmConfig>>,
+    ///replay_block_transactions
+    pub tracer: Option<TraceApi<Provider, EthApi<Provider, Pool, Network, EvmConfig>>>
 }
 
 impl<Provider, Pool, Network, EvmConfig> EthApi<Provider, Pool, Network, EvmConfig>
@@ -73,7 +78,7 @@ where
             proof_permits,
         );
 
-        Self { inner: Arc::new(inner) }
+        Self { inner: Arc::new(inner), tracer: None }
     }
 }
 
@@ -111,7 +116,19 @@ where
             ctx.config.proof_permits,
         );
 
-        Self { inner: Arc::new(inner) }
+        let mut eth_trace_self = Self{ inner: Arc::new(inner), tracer:None };
+        let blocking_pool_guard = BlockingTaskGuard::new(2000);
+
+        let eth_tracer = TraceApi::new(
+            ctx.provider.clone(),
+            eth_trace_self.clone(),
+            blocking_pool_guard);
+        
+        eth_trace_self.tracer = Some(eth_tracer);
+
+        eth_trace_self
+
+
     }
 }
 
@@ -132,7 +149,7 @@ impl<Provider, Pool, Network, EvmConfig> std::fmt::Debug
 
 impl<Provider, Pool, Network, EvmConfig> Clone for EthApi<Provider, Pool, Network, EvmConfig> {
     fn clone(&self) -> Self {
-        Self { inner: Arc::clone(&self.inner) }
+        Self { inner: Arc::clone(&self.inner), tracer: self.tracer.clone() }
     }
 }
 

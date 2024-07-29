@@ -4,11 +4,13 @@ use reth_chainspec::{ChainInfo, ChainSpec};
 use reth_errors::{RethError, RethResult};
 use reth_evm::ConfigureEvm;
 use reth_network_api::NetworkInfo;
-use reth_primitives::{Address, U256, U64};
-use reth_provider::{BlockReaderIdExt, ChainSpecProvider, EvmEnvProvider, StateProviderFactory};
-use reth_rpc_eth_api::helpers::EthApiSpec;
-use reth_rpc_types::{SyncInfo, SyncStatus};
+use reth_primitives::{Address, SealedBlock, U256, U64};
+use reth_provider::{BlockNumReader, BlockReaderIdExt, ChainSpecProvider, EvmEnvProvider, StateProviderFactory};
+use reth_rpc_eth_api::helpers::{EthApiSpec, LoadBlock};
+use reth_rpc_eth_types::EthResult;
+use reth_rpc_types::{trace::parity::{LocalizedTransactionTrace, TraceResultsWithTransactionHash, TraceType}, BlockId, BlockNumberOrTag, SyncInfo, SyncStatus};
 use reth_transaction_pool::TransactionPool;
+use revm_primitives::HashSet;
 
 use crate::EthApi;
 
@@ -67,5 +69,28 @@ where
 
     fn chain_spec(&self) -> Arc<ChainSpec> {
         self.inner.provider().chain_spec()
+    }
+
+    /// Replays all transactions in a block
+    async fn get_trx_trace(&self, block_number: BlockNumberOrTag) -> EthResult<Option<Vec<TraceResultsWithTransactionHash>>>{
+        
+        let tracer_clone = self.tracer.clone();
+        let trace_set:HashSet<TraceType> = HashSet::from([TraceType::Trace]);
+
+        tracer_clone.unwrap().replay_block_transactions( BlockId::Number(block_number), trace_set).await
+    }
+
+    //Returns SealedBlock by id
+    async fn get_block_by_id(&self, block_id: BlockId) -> EthResult<Option<SealedBlock>>{
+        let tracer_clone = self.tracer.clone();
+
+        tracer_clone.unwrap().eth_api().block(block_id).await
+    }
+
+    /// Returns author and uncle rewards at a given block.
+    async fn get_block_rewards(&self, block:&SealedBlock) -> EthResult<Option<Vec<LocalizedTransactionTrace>>>{
+        let tracer_clone = self.tracer.clone();
+
+        tracer_clone.unwrap().get_block_rewards(block).await
     }
 }
