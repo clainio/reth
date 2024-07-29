@@ -43,6 +43,7 @@ alloy-dyn-abi = { workspace = true, features = ["eip712"] }
 
 # rpc
 jsonrpsee = { workspace = true, features = ["server", "macros"] }
+jsonrpsee-types.workspace = true
 
 # async
 async-trait.workspace = true
@@ -61,5 +62,4 @@ optimism = [
     "reth-primitives/optimism",
     "revm/optimism",
     "reth-provider/optimism",
-    "reth-rpc-eth-types/optimism"
 ]

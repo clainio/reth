@@ -1,10 +1,11 @@
 use crate::backfill::{BackfillAction, BackfillEvent, BackfillSync};
 use futures::Stream;
-use reth_stages_api::PipelineTarget;
+use reth_stages_api::{ControlFlow, PipelineTarget};
 use std::{
     pin::Pin,
     task::{Context, Poll},
 };
+use tracing::*;
 
 /// The type that drives the chain forward.
 ///
@@ -88,10 +89,10 @@ where
                     }
                     BackfillEvent::Finished(res) => {
                         return match res {
-                            Ok(event) => {
-                                tracing::debug!(?event, "backfill sync finished");
+                            Ok(ctrl) => {
+                                tracing::debug!(?ctrl, "backfill sync finished");
                                 // notify handler that backfill sync finished
-                                this.handler.on_event(FromOrchestrator::BackfillSyncFinished);
+                                this.handler.on_event(FromOrchestrator::BackfillSyncFinished(ctrl));
                                 Poll::Ready(ChainEvent::BackfillSyncFinished)
                             }
                             Err(err) => {
@@ -112,7 +113,7 @@ where
             match this.handler.poll(cx) {
                 Poll::Ready(handler_event) => {
                     match handler_event {
-                        HandlerEvent::BackfillSync(action) => {
+                        HandlerEvent::BackfillAction(action) => {
                             // forward action to backfill_sync
                             this.backfill_sync.on_action(action);
                             continue 'outer
@@ -120,6 +121,10 @@ where
                         HandlerEvent::Event(ev) => {
                             // bubble up the event
                             return Poll::Ready(ChainEvent::Handler(ev));
+                        }
+                        HandlerEvent::FatalError => {
+                            error!(target: "engine::tree", "Fatal error");
+                            return Poll::Ready(ChainEvent::FatalError)
                         }
                     }
                 }
@@ -169,7 +174,7 @@ pub enum ChainEvent<T> {
 ///
 /// The [`ChainOrchestrator`] is responsible for advancing this handler through
 /// [`ChainHandler::poll`] and handling the emitted events, for example
-/// [`HandlerEvent::BackfillSync`] to start a backfill sync. Events from the [`ChainOrchestrator`]
+/// [`HandlerEvent::BackfillAction`] to start a backfill sync. Events from the [`ChainOrchestrator`]
 /// are passed to the handler via [`ChainHandler::on_event`], e.g.
 /// [`FromOrchestrator::BackfillSyncStarted`] once the backfill sync started or finished.
 pub trait ChainHandler: Send + Sync {
@@ -187,16 +192,18 @@ pub trait ChainHandler: Send + Sync {
 #[derive(Clone, Debug)]
 pub enum HandlerEvent<T> {
     /// Request an action to backfill sync
-    BackfillSync(BackfillAction),
+    BackfillAction(BackfillAction),
     /// Other event emitted by the handler
     Event(T),
+    // Fatal error
+    FatalError,
 }
 
 /// Internal events issued by the [`ChainOrchestrator`].
 #[derive(Clone, Debug)]
 pub enum FromOrchestrator {
     /// Invoked when backfill sync finished
-    BackfillSyncFinished,
+    BackfillSyncFinished(ControlFlow),
     /// Invoked when backfill sync started
     BackfillSyncStarted,
 }
