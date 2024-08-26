@@ -1,12 +1,13 @@
 //! Loads chain metadata.
 
 use std::sync::Arc;
-
+use alloy_rpc_types_trace::parity::LocalizedTransactionTrace;
 use futures::Future;
+use jsonrpsee::http_client::HttpClient;
 use reth_chainspec::{ChainInfo, ChainSpec};
 use reth_errors::{RethError, RethResult};
 use reth_network_api::NetworkInfo;
-use reth_primitives::{Address, U256, U64};
+use reth_primitives::{Address, Header, U256, U64};
 use reth_provider::{BlockNumReader, ChainSpecProvider, StageCheckpointReader};
 use reth_rpc_types::{Stage, SyncInfo, SyncStatus};
 
@@ -92,4 +93,21 @@ pub trait EthApiSpec: Send + Sync {
     fn chain_spec(&self) -> Arc<ChainSpec> {
         self.provider().chain_spec()
     }
+
+    ///RPC client for trace
+    fn get_rpc_client(&self) -> Option<HttpClient>;
+
+    ///Calculate block rewards
+    fn calculate_base_block_reward(&self, header: &Header) -> Result<Option<u128>, reth_rpc_server_types::RethRpcModule>;
+
+    ///Extract block rewards
+    fn extract_reward_traces(
+        &self,
+        header: &Header,
+        ommers: &[Header],
+        base_block_reward: u128,
+    ) -> Vec<LocalizedTransactionTrace>;
+
+    ///Get block rewards
+    fn get_block_rewards(&self, block_header: &Header, omners: &[Header] )-> impl Future < Output = Result<Option<Vec<LocalizedTransactionTrace>>, reth_rpc_server_types::RethRpcModule>> + Send;
 }

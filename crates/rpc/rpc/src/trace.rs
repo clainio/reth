@@ -699,7 +699,7 @@ struct TraceApiInner<Provider, Eth> {
 
 /// Helper to construct a [`LocalizedTransactionTrace`] that describes a reward to the block
 /// beneficiary.
-fn reward_trace(header: &Header, reward: RewardAction) -> LocalizedTransactionTrace {
+pub(crate) fn reward_trace(header: &Header, reward: RewardAction) -> LocalizedTransactionTrace {
     LocalizedTransactionTrace {
         block_hash: Some(header.hash_slow()),
         block_number: Some(header.number),
