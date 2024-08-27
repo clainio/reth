@@ -1,17 +1,14 @@
 //! Implementation of the [`jsonrpsee`] generated [`EthApiServer`] trait. Handles RPC requests for
 //! the `eth_` namespace.
 
-use std::collections::BTreeMap;
-use std::default;
+use std::collections::{BTreeMap, HashSet};
 
 use alloy_consensus::TxEnvelope;
 use alloy_dyn_abi::TypedData;
 use alloy_json_rpc::RpcObject;
-use alloy_rpc_types_trace::parity::{LocalizedTransactionTrace, TraceResultsWithTransactionHash};
+use alloy_rpc_types_trace::parity::{ TraceResultsWithTransactionHash, TraceType};
 use futures::join;
-use jsonrpsee::core::ClientError;
-use jsonrpsee::{core::RpcResult, proc_macros::rpc, rpc_params};
-use jsonrpsee::core::client::ClientT;
+use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 use jsonrpsee_types::ErrorObjectOwned;
 use reth_primitives::{
     transaction::AccessListResult, Address, BlockId, BlockNumberOrTag, Bytes, B256, B64, U256, U64,
@@ -24,7 +21,8 @@ use reth_rpc_types::{
     AnyTransactionReceipt, BlockOverrides, Bundle, EIP1186AccountProofResponse, EthCallResponse,
     FeeHistory, Header, Index, StateContext, SyncStatus, TransactionRequest, Work,
 };
-use tokio::task::JoinHandle;
+use revm_inspectors::tracing::parity::populate_state_diff;
+use revm_inspectors::tracing::TracingInspectorConfig;
 use tracing::trace;
 
 use crate::{
@@ -35,12 +33,9 @@ use crate::{
     RpcBlock, RpcTransaction,
 };
 use revm_primitives::FixedBytes;
-use reth_rpc_types::{Block, BlockTransactions, Rich, RichBlock};
+use reth_rpc_types::{Block, BlockTransactions, Rich};
 use crate::helpers::data::{self, EnrichedBlock, EnrichedTransaction};
 use alloy_primitives::Signature as Alloy_Signature;
-use serde_json::Value;
-use serde_json::Error;
-use reth_rpc_types::trace::parity::TraceResults;
 use revm_primitives::hex;
 
 /// Helper trait, unifies functionality that must be supported to implement all RPC methods for
@@ -451,38 +446,32 @@ where
         trace!(target: "rpc::eth", ?number, ?true, "Serving eth_getBlockReceiptTrace");
         
         let trace_task = tokio::spawn({
-            let rpc_client = self.get_rpc_client().unwrap();
-            let number = number.as_number().unwrap();
+            let self_clone = self.clone();
+
+            
             async move {
-                let trace_rpc_result = rpc_client.request("trace_replayBlockTransactions",
-                                                            rpc_params![format!("0x{:x}", number), ["trace"]])
-                                                            .await;
-                match trace_rpc_result{
-                    Ok(trace) =>{
-                        let trace_res:Result<Vec<TraceResultsWithTransactionHash>, _> =  serde_json::from_value(trace);
-                        match trace_res{
-                            Ok(alloy_trace) =>{
-                                Ok(alloy_trace)
-                            }
-                            Err(error)=>{
-                                let trace_rpc_error = ErrorObjectOwned::owned(
-                                    0,
-                                    error.to_string(),
-                                    None::<()> 
-                                );
-                                return Err(trace_rpc_error)
-                            }
+                let number = number.as_number().unwrap();
+                let trace_types:HashSet<TraceType> = HashSet::from([TraceType::Trace]);
+                
+                self_clone.trace_block_with(
+                    number.into(),
+                    TracingInspectorConfig::from_parity_config(&trace_types),
+                    move |tx_info, inspector, res, state, db| {
+                        let mut full_trace =
+                            inspector.into_parity_builder().into_trace_results(&res, &trace_types);
+    
+                        if let Some(ref mut state_diff) = full_trace.state_diff {
+                            populate_state_diff(state_diff, db, state.iter()).unwrap();
                         }
-                    }
-                    Err(rpc_error) =>{
-                        let trace_rpc_error = ErrorObjectOwned::owned(
-                            0,
-                            rpc_error.to_string(),
-                            None::<()> 
-                        );
-                        return Err(trace_rpc_error)
-                    }
-                }                           
+    
+                        let trace = TraceResultsWithTransactionHash {
+                            transaction_hash: tx_info.hash.expect("tx hash is set"),
+                            full_trace,
+                        };
+                        Ok(trace)
+                    },
+                )
+                .await
             }
         });
         
@@ -540,8 +529,8 @@ where
 
         let (trx_traces_handle, trx_receipts_handle, block_rewards_handle) = join!(trace_task, receipts_task, block_rewards_task);
 
+        let trx_traces = trx_traces_handle.unwrap()?.unwrap();
         let trx_receipts: Vec<reth_rpc_types::WithOtherFields<reth_rpc_types::TransactionReceipt<reth_rpc_types::AnyReceiptEnvelope<reth_rpc_types::Log>>>> = trx_receipts_handle.unwrap()?.unwrap();
-        let trx_traces = trx_traces_handle.unwrap()?;
         
         let block_reward_traces = block_rewards_handle.unwrap().unwrap();
 

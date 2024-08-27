@@ -1,4 +1,3 @@
-use jsonrpsee::http_client::HttpClient;
 use reth_chainspec::{ChainSpec, EthereumHardforks};
 use reth_consensus_common::calc::{base_block_reward, base_block_reward_pre_merge, block_reward, ommer_reward};
 use reth_network_api::NetworkInfo;
@@ -35,10 +34,6 @@ where
 
     fn signers(&self) -> &parking_lot::RwLock<Vec<Box<dyn reth_rpc_eth_api::helpers::EthSigner>>> {
         self.inner.signers()
-    }
-
-    fn get_rpc_client(&self) -> Option<HttpClient>{
-        self.rpc_client.clone()
     }
 
     fn extract_reward_traces(
@@ -107,5 +102,5 @@ where
             }
  
             Ok(Some(trace_rewards))
-     }   
+    }
 }

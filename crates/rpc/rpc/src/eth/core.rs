@@ -1,11 +1,10 @@
 //! Implementation of the [`jsonrpsee`] generated [`EthApiServer`](crate::EthApi) trait
 //! Handles RPC requests for the `eth_` namespace.
 
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use alloy_network::Ethereum;
 use derive_more::Deref;
-use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use reth_node_api::{BuilderProvider, FullNodeComponents};
 use reth_primitives::{BlockNumberOrTag, U256};
 use reth_provider::{BlockReaderIdExt, CanonStateSubscriptions, ChainSpecProvider};
@@ -35,15 +34,12 @@ use tokio::sync::Mutex;
 #[derive(Deref)]
 pub struct EthApi<Provider, Pool, Network, EvmConfig> {
     /// All nested fields bundled together.
-    #[deref]
     pub(super) inner: Arc<EthApiInner<Provider, Pool, Network, EvmConfig>>,
-    /// PRC client for trace
-    pub rpc_client: Option<HttpClient>
 }
 
 impl<Provider, Pool, Network, EvmConfig> Clone for EthApi<Provider, Pool, Network, EvmConfig> {
     fn clone(&self) -> Self {
-        Self { inner: self.inner.clone(), rpc_client: self.rpc_client.clone() }
+        Self { inner: self.inner.clone() }
     }
 }
 
@@ -83,7 +79,7 @@ where
             proof_permits,
         );
 
-        Self { inner: Arc::new(inner), rpc_client: None }
+        Self { inner: Arc::new(inner) }
     }
 }
 
@@ -121,15 +117,7 @@ where
             ctx.config.proof_permits,
         );
 
-        let timeout = Duration::from_secs(600);
-        let client = HttpClientBuilder::default()
-                                        .max_response_size(500*1024*1024)
-                                        .max_request_size(10*1024*1024)
-                                        .request_timeout(timeout)
-                                        .build("http://127.0.0.1:8546")
-                                        .unwrap();
-
-        Self { inner: Arc::new(inner), rpc_client: Some(client) }
+        Self { inner: Arc::new(inner) }
     }
 }
 

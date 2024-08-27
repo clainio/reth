@@ -3,7 +3,6 @@
 use std::sync::Arc;
 use alloy_rpc_types_trace::parity::LocalizedTransactionTrace;
 use futures::Future;
-use jsonrpsee::http_client::HttpClient;
 use reth_chainspec::{ChainInfo, ChainSpec};
 use reth_errors::{RethError, RethResult};
 use reth_network_api::NetworkInfo;
@@ -93,10 +92,6 @@ pub trait EthApiSpec: Send + Sync {
     fn chain_spec(&self) -> Arc<ChainSpec> {
         self.provider().chain_spec()
     }
-
-    ///RPC client for trace
-    fn get_rpc_client(&self) -> Option<HttpClient>;
-
     ///Calculate block rewards
     fn calculate_base_block_reward(&self, header: &Header) -> Result<Option<u128>, reth_rpc_server_types::RethRpcModule>;
 
