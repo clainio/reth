@@ -8305,7 +8305,6 @@ dependencies = [
  "alloy-network",
  "alloy-primitives",
  "alloy-rlp",
- "alloy-rpc-types",
  "async-trait",
  "derive_more 1.0.0",
  "futures",
@@ -8501,7 +8500,6 @@ dependencies = [
  "revm-inspectors",
  "revm-primitives",
  "serde",
- "serde_json",
  "tokio",
  "tracing",
 ]
