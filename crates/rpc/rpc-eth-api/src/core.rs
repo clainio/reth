@@ -605,7 +605,7 @@ where
                if trx.hash != trace.transaction_hash || trx.hash != receipt.transaction_hash{
                 let trx_trace_hash_error = ErrorObjectOwned::owned(
                     2,
-                    format!("Mismatch between transaction hash and coresponding trace hash or receipt hash {}", trx.hash),
+                    format!("Mismatch between transaction hash and corresponding trace hash or receipt hash {}", trx.hash),
                     None::<()> 
                 );
                 return Err(trx_trace_hash_error)    
