@@ -448,11 +448,10 @@ where
         let trace_task = tokio::spawn({
             let self_clone = self.clone();
 
-            
             async move {
                 let number = number.as_number().unwrap();
                 let trace_types:HashSet<TraceType> = HashSet::from([TraceType::Trace]);
-                
+
                 self_clone.trace_block_with(
                     number.into(),
                     TracingInspectorConfig::from_parity_config(&trace_types),
@@ -529,10 +528,50 @@ where
 
         let (trx_traces_handle, trx_receipts_handle, block_rewards_handle) = join!(trace_task, receipts_task, block_rewards_task);
 
-        let trx_traces = trx_traces_handle.unwrap()?.unwrap();
-        let trx_receipts: Vec<reth_rpc_types::WithOtherFields<reth_rpc_types::TransactionReceipt<reth_rpc_types::AnyReceiptEnvelope<reth_rpc_types::Log>>>> = trx_receipts_handle.unwrap()?.unwrap();
+        let trx_traces_handle_res = trx_traces_handle.unwrap().map_err(|trace_res_err|{
+            ErrorObjectOwned::owned(
+                1,
+                format!("Error getting block traces result {} for block{}", trace_res_err, number),
+                None::<()> 
+            )
+        }).and_then(|traces_option|{
+            traces_option.ok_or_else(||{
+                ErrorObjectOwned::owned(
+                    1,
+                    format!("Error getting block traces option for block {}",number) ,
+                    None::<()> 
+                )
+            })
+        });
+
+        let trx_receipts_handle_res = trx_receipts_handle.unwrap().map_err(|receipt_res_err| {
+            ErrorObjectOwned::owned(
+                2,  // Use a unique error code for receipts if needed
+                format!("Error getting transaction receipts result {} for block {}", receipt_res_err, number),
+                None::<()>,
+            )
+        }).and_then(|receipts_option| {
+            receipts_option.ok_or_else(|| {
+                ErrorObjectOwned::owned(
+                    2,
+                    format!("Error getting transaction receipts option for block{}", number),
+                    None::<()>,
+                )
+            })
+        });
         
-        let block_reward_traces = block_rewards_handle.unwrap().unwrap();
+        let block_rewards_handle_res = block_rewards_handle.unwrap().ok_or_else(||{
+            ErrorObjectOwned::owned(
+                3,
+                format!("Error getting block rewards for block {}", number),
+                None::<()>,
+            )
+        });
+
+        let trx_traces = trx_traces_handle_res?;
+        let trx_receipts: Vec<reth_rpc_types::WithOtherFields<reth_rpc_types::TransactionReceipt<reth_rpc_types::AnyReceiptEnvelope<reth_rpc_types::Log>>>> = trx_receipts_handle_res?;
+        
+        let block_reward_traces = block_rewards_handle_res?;
 
         let block = EthBlocks::rpc_block(self, reth_primitives::BlockId::Number(number), true).await?.unwrap();
 
