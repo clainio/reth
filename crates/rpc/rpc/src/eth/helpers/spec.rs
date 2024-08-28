@@ -81,8 +81,8 @@ where
                     base_block_reward(
                         chain_spec.as_ref(),
                         header.number,
-                        header.difficulty,
                         U256::ZERO,
+                        header.difficulty,
                     )
             }
         })

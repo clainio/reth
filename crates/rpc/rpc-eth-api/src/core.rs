@@ -506,7 +506,7 @@ where
                 receipts_root:header.receipts_root, 
                 withdrawals_root: header.withdrawals_root, 
                 logs_bloom: header.logs_bloom, 
-                difficulty: header.difficulty, 
+                difficulty: header.total_difficulty.unwrap_or(U256::ZERO), 
                 number: header.number.unwrap(), 
                 gas_limit: header.gas_limit as u64, 
                 gas_used: header.gas_used as u64, 
