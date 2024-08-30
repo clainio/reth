@@ -1,39 +1,38 @@
 //! Implementation of the [`jsonrpsee`] generated [`EthApiServer`] trait. Handles RPC requests for
 //! the `eth_` namespace.
 
-use std::collections::{BTreeMap, HashSet};
-
+use std::collections:: HashSet;
 use alloy_consensus::TxEnvelope;
 use alloy_dyn_abi::TypedData;
 use alloy_json_rpc::RpcObject;
 use alloy_rpc_types_trace::parity::{ TraceResultsWithTransactionHash, TraceType};
 use futures::join;
-use jsonrpsee::{core::RpcResult, proc_macros::rpc};
-use jsonrpsee_types::ErrorObjectOwned;
+use jsonrpsee::{core::RpcResult, proc_macros::rpc, types::ErrorObjectOwned};
 use reth_primitives::{
     transaction::AccessListResult, Address, BlockId, BlockNumberOrTag, Bytes, B256, B64, U256, U64,
 };
+use reth_rpc_eth_types::{utils::binary_search, EthApiError};
 use reth_rpc_server_types::{result::internal_rpc_err, ToRpcResult};
 use reth_rpc_types::{
     serde_helpers::JsonStorageKey,
     simulate::{SimBlock, SimulatedBlock},
     state::{EvmOverrides, StateOverride},
-    AnyTransactionReceipt, BlockOverrides, Bundle, EIP1186AccountProofResponse, EthCallResponse,
+    BlockOverrides, BlockTransactions, Bundle, EIP1186AccountProofResponse, EthCallResponse,
     FeeHistory, Header, Index, StateContext, SyncStatus, TransactionRequest, Work,
 };
 use revm_inspectors::tracing::parity::populate_state_diff;
 use revm_inspectors::tracing::TracingInspectorConfig;
+use reth_transaction_pool::{PoolTransaction, TransactionPool};
 use tracing::trace;
 
 use crate::{
     helpers::{
-        transaction::UpdateRawTxForwarder, EthApiSpec, EthBlocks, EthCall, EthFees, EthState,
-        EthTransactions, FullEthApi,
+        EthApiSpec, EthBlocks, EthCall, EthFees, EthState, EthTransactions, FullEthApi, LoadState,
     },
-    RpcBlock, RpcTransaction,
+    RpcBlock, RpcReceipt, RpcTransaction,
 };
 use revm_primitives::FixedBytes;
-use reth_rpc_types::{Block, BlockTransactions, Rich};
+use reth_rpc_types::{Block};
 use crate::helpers::data::{self, EnrichedBlock, EnrichedTransaction};
 use alloy_primitives::Signature as Alloy_Signature;
 use revm_primitives::hex;
@@ -41,17 +40,21 @@ use revm_primitives::hex;
 /// Helper trait, unifies functionality that must be supported to implement all RPC methods for
 /// server.
 pub trait FullEthApiServer:
-    EthApiServer<RpcTransaction<Self::NetworkTypes>, RpcBlock<Self::NetworkTypes>>
-    + FullEthApi
-    + UpdateRawTxForwarder
+    EthApiServer<
+        RpcTransaction<Self::NetworkTypes>,
+        RpcBlock<Self::NetworkTypes>,
+        RpcReceipt<Self::NetworkTypes>,
+    > + FullEthApi
     + Clone
 {
 }
 
 impl<T> FullEthApiServer for T where
-    T: EthApiServer<RpcTransaction<T::NetworkTypes>, RpcBlock<T::NetworkTypes>>
-        + FullEthApi
-        + UpdateRawTxForwarder
+    T: EthApiServer<
+            RpcTransaction<T::NetworkTypes>,
+            RpcBlock<T::NetworkTypes>,
+            RpcReceipt<T::NetworkTypes>,
+        > + FullEthApi
         + Clone
 {
 }
@@ -59,7 +62,7 @@ impl<T> FullEthApiServer for T where
 /// Eth rpc interface: <https://ethereum.github.io/execution-apis/api-documentation/>
 #[cfg_attr(not(feature = "client"), rpc(server, namespace = "eth"))]
 #[cfg_attr(feature = "client", rpc(server, client, namespace = "eth"))]
-pub trait EthApi<T: RpcObject, B: RpcObject> {
+pub trait EthApi<T: RpcObject, B: RpcObject, R: RpcObject> {
     /// Returns the protocol version encoded as a string.
     #[method(name = "protocolVersion")]
     async fn protocol_version(&self) -> RpcResult<U64>;
@@ -97,7 +100,7 @@ pub trait EthApi<T: RpcObject, B: RpcObject> {
     async fn block_receipts_trace(
         &self,
         number: BlockNumberOrTag
-    ) -> RpcResult<Option<Rich<EnrichedBlock>>>;
+    ) -> RpcResult<Option<EnrichedBlock>>;
 
     /// Returns the number of transactions in a block from a block matching the given block hash.
     #[method(name = "getBlockTransactionCountByHash")]
@@ -123,10 +126,7 @@ pub trait EthApi<T: RpcObject, B: RpcObject> {
 
     /// Returns all transaction receipts for a given block.
     #[method(name = "getBlockReceipts")]
-    async fn block_receipts(
-        &self,
-        block_id: BlockId,
-    ) -> RpcResult<Option<Vec<AnyTransactionReceipt>>>;
+    async fn block_receipts(&self, block_id: BlockId) -> RpcResult<Option<Vec<R>>>;
 
     /// Returns an uncle block of the given block and index.
     #[method(name = "getUncleByBlockHashAndIndex")]
@@ -184,9 +184,17 @@ pub trait EthApi<T: RpcObject, B: RpcObject> {
         index: Index,
     ) -> RpcResult<Option<T>>;
 
+    /// Returns information about a transaction by sender and nonce.
+    #[method(name = "getTransactionBySenderAndNonce")]
+    async fn transaction_by_sender_and_nonce(
+        &self,
+        address: Address,
+        nonce: U64,
+    ) -> RpcResult<Option<T>>;
+
     /// Returns the receipt of a transaction by transaction hash.
     #[method(name = "getTransactionReceipt")]
-    async fn transaction_receipt(&self, hash: B256) -> RpcResult<Option<AnyTransactionReceipt>>;
+    async fn transaction_receipt(&self, hash: B256) -> RpcResult<Option<R>>;
 
     /// Returns the balance of the account of given address.
     #[method(name = "getBalance")]
@@ -376,7 +384,12 @@ pub trait EthApi<T: RpcObject, B: RpcObject> {
 }
 
 #[async_trait::async_trait]
-impl<T> EthApiServer<RpcTransaction<T::NetworkTypes>, RpcBlock<T::NetworkTypes>> for T
+impl<T>
+    EthApiServer<
+        RpcTransaction<T::NetworkTypes>,
+        RpcBlock<T::NetworkTypes>,
+        RpcReceipt<T::NetworkTypes>,
+    > for T
 where
     T: FullEthApi,
     jsonrpsee_types::error::ErrorObject<'static>: From<T::Error>,
@@ -442,7 +455,7 @@ where
     async fn block_receipts_trace(
         &self,
         number: BlockNumberOrTag
-    )-> RpcResult<Option<Rich<EnrichedBlock>>> {
+    )-> RpcResult<Option<EnrichedBlock>> {
         trace!(target: "rpc::eth", ?number, ?true, "Serving eth_getBlockReceiptTrace");
         
         let trace_task = tokio::spawn({
@@ -507,7 +520,7 @@ where
                 withdrawals_root: header.withdrawals_root, 
                 logs_bloom: header.logs_bloom, 
                 difficulty: header.total_difficulty.unwrap_or(U256::ZERO), 
-                number: header.number.unwrap(), 
+                number: header.number, 
                 gas_limit: header.gas_limit as u64, 
                 gas_used: header.gas_used as u64, 
                 timestamp: header.timestamp, 
@@ -614,7 +627,7 @@ where
                let mut alloy_public_key = String::new();
                let mut check_address:Address = Default::default();
 
-               match TxEnvelope::try_from(trx.clone()) {
+               match TxEnvelope::try_from(trx.inner.clone()) {
                    Ok(tx_envelope) => {
                         let tx_message_hash: Option<FixedBytes<32>>;
                         let tx_sig: Option<Alloy_Signature>;
@@ -703,16 +716,12 @@ where
             uncles: block.uncles,
             transactions: BlockTransactions::Full(enriched_trxs),
             size: block.size,
-            withdrawals: block.withdrawals,
-            other: block.other
+            withdrawals: block.withdrawals
         };
 
-        let rich_block: Rich<EnrichedBlock> = Rich{
-            inner: EnrichedBlock{
+        let rich_block: EnrichedBlock = EnrichedBlock{
                 inner: e_block,
                 rewards: block_reward_traces
-            },
-            extra_info: BTreeMap::default()
         };
 
         Ok(Some(rich_block))
@@ -752,7 +761,7 @@ where
     async fn block_receipts(
         &self,
         block_id: BlockId,
-    ) -> RpcResult<Option<Vec<AnyTransactionReceipt>>> {
+    ) -> RpcResult<Option<Vec<RpcReceipt<T::NetworkTypes>>>> {
         trace!(target: "rpc::eth", ?block_id, "Serving eth_getBlockReceipts");
         Ok(EthBlocks::block_receipts(self, block_id).await?)
     }
@@ -840,8 +849,69 @@ where
             .await?)
     }
 
+    /// Handler for: `eth_getTransactionBySenderAndNonce`
+    async fn transaction_by_sender_and_nonce(
+        &self,
+        sender: Address,
+        nonce: U64,
+    ) -> RpcResult<Option<RpcTransaction<T::NetworkTypes>>> {
+        trace!(target: "rpc::eth", ?sender, ?nonce, "Serving eth_getTransactionBySenderAndNonce");
+        let nonce = nonce.to::<u64>();
+
+        // Check the pool first
+        if let Some(tx) = LoadState::pool(self).get_transaction_by_sender_and_nonce(sender, nonce) {
+            let transaction = tx.transaction.clone().into_consensus();
+            return Ok(Some(reth_rpc_types_compat::transaction::from_recovered(transaction)))
+        }
+
+        // Check if the sender is a contract
+        if self.get_code(sender, None).await?.len() > 0 {
+            return Ok(None)
+        }
+
+        let highest = EthState::transaction_count(self, sender, None).await?.saturating_to::<u64>();
+
+        // If the nonce is higher or equal to the highest nonce, the transaction is pending or not
+        // exists.
+        if nonce >= highest {
+            return Ok(None)
+        }
+
+        // perform a binary search over the block range to find the block in which the sender's
+        // nonce reached the requested nonce.
+        let num = binary_search::<_, _, ErrorObjectOwned>(
+            1,
+            self.block_number()?.saturating_to(),
+            |mid| {
+                async move {
+                    let mid_nonce = EthState::transaction_count(self, sender, Some(mid.into()))
+                        .await?
+                        .saturating_to::<u64>();
+
+                    // The `transaction_count` returns the `nonce` after the transaction was
+                    // executed, which is the state of the account after the block, and we need to
+                    // find the transaction whose nonce is the pre-state, so
+                    // need to compare with `nonce`(no equal).
+                    Ok(mid_nonce > nonce)
+                }
+            },
+        )
+        .await?;
+
+        let Some(BlockTransactions::Full(transactions)) =
+            self.block_by_number(num.into(), true).await?.map(|block| block.transactions)
+        else {
+            return Err(EthApiError::UnknownBlockNumber.into());
+        };
+
+        Ok(transactions.into_iter().find(|tx| *tx.from == *sender && tx.nonce == nonce))
+    }
+
     /// Handler for: `eth_getTransactionReceipt`
-    async fn transaction_receipt(&self, hash: B256) -> RpcResult<Option<AnyTransactionReceipt>> {
+    async fn transaction_receipt(
+        &self,
+        hash: B256,
+    ) -> RpcResult<Option<RpcReceipt<T::NetworkTypes>>> {
         trace!(target: "rpc::eth", ?hash, "Serving eth_getTransactionReceipt");
         Ok(EthTransactions::transaction_receipt(self, hash).await?)
     }
