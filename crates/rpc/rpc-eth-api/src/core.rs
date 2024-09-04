@@ -534,6 +534,14 @@ where
                 extra_data: header.extra_data
             });
 
+            if block_header_reth.is_none(){
+                return Err( ErrorObjectOwned::owned(
+                    1,
+                    format!("Error in traces join handle for block number {}:", number),
+                    None::<()>
+                )
+            );}
+
             async move{
                 self_clone.get_block_rewards(&block_header_reth.unwrap(), omners.as_slice()).await.unwrap()
             }
@@ -541,7 +549,14 @@ where
 
         let (trx_traces_handle, trx_receipts_handle, block_rewards_handle) = join!(trace_task, receipts_task, block_rewards_task);
 
-        let trx_traces_handle_res = trx_traces_handle.unwrap().map_err(|trace_res_err|{
+        let trx_traces_handle_res = trx_traces_handle.map_err(|handle_err|{
+            ErrorObjectOwned::owned(
+                1,
+                format!("Error in traces join handle for block number {}: {}", number, handle_err),
+                None::<()>
+            )
+        })?
+        .map_err(|trace_res_err|{
             ErrorObjectOwned::owned(
                 1,
                 format!("Error getting block traces result {} for block{}", trace_res_err, number),
@@ -557,9 +572,16 @@ where
             })
         });
 
-        let trx_receipts_handle_res = trx_receipts_handle.unwrap().map_err(|receipt_res_err| {
+        let trx_receipts_handle_res = trx_receipts_handle.map_err(|handle_err|{
             ErrorObjectOwned::owned(
-                2,  // Use a unique error code for receipts if needed
+                1,
+                format!("Error in transaction receipts for block number {}: {}", number, handle_err),
+                None::<()>
+            )
+        })?
+        .map_err(|receipt_res_err| {
+            ErrorObjectOwned::owned(
+                2,
                 format!("Error getting transaction receipts result {} for block {}", receipt_res_err, number),
                 None::<()>,
             )
@@ -573,13 +595,18 @@ where
             })
         });
         
-        let block_rewards_handle_res = block_rewards_handle.unwrap().ok_or_else(||{
-            ErrorObjectOwned::owned(
-                3,
-                format!("Error getting block rewards for block {}", number),
-                None::<()>,
-            )
-        });
+        let block_rewards_handle_res = match block_rewards_handle {
+            Ok(handle_res) =>{
+                Ok(handle_res.unwrap())
+            }
+            Err(handle_err)=> {
+               Err(ErrorObjectOwned::owned(
+                            3,
+                            format!("Error getting block rewards for block {}, error: {}", number, handle_err),
+                            None::<()>,
+                ))
+            }
+        };
 
         let trx_traces = trx_traces_handle_res?;
         let trx_receipts: Vec<reth_rpc_types::WithOtherFields<reth_rpc_types::TransactionReceipt<reth_rpc_types::AnyReceiptEnvelope<reth_rpc_types::Log>>>> = trx_receipts_handle_res?;
