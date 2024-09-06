@@ -8358,7 +8358,7 @@ dependencies = [
  "alloy-eips",
  "alloy-json-rpc",
  "alloy-network",
- "alloy-primitives 0.8.0",
+ "alloy-primitives",
  "alloy-rpc-types",
  "alloy-rpc-types-trace",
  "async-trait",
