@@ -1,7 +1,8 @@
 use reth_chainspec::{ChainSpec, EthereumHardforks};
 use reth_consensus_common::calc::{base_block_reward, base_block_reward_pre_merge, block_reward, ommer_reward};
 use reth_network_api::NetworkInfo;
-use reth_primitives::{Header, U256};
+use reth_primitives::Header;
+use alloy_primitives::U256;
 use reth_provider::{BlockNumReader, ChainSpecProvider, StageCheckpointReader};
 use reth_rpc_eth_api::helpers:: EthApiSpec;
 use reth_rpc_types::trace::parity::{LocalizedTransactionTrace, RewardAction, RewardType};

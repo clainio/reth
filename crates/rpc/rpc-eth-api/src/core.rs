@@ -1,6 +1,6 @@
 //! Implementation of the [`jsonrpsee`] generated [`EthApiServer`] trait. Handles RPC requests for
 //! the `eth_` namespace.
-
+//! 
 use std::collections:: HashSet;
 use alloy_consensus::TxEnvelope;
 use alloy_dyn_abi::TypedData;
@@ -8,13 +8,17 @@ use alloy_json_rpc::RpcObject;
 use alloy_rpc_types_trace::parity::{ TraceResultsWithTransactionHash, TraceType};
 use futures::join;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc, types::ErrorObjectOwned};
+use alloy_network::Network;
 use reth_primitives::{
-    transaction::AccessListResult, Address, BlockId, BlockNumberOrTag, Bytes, B256, B64, U256, U64,
+    transaction::AccessListResult, BlockId, BlockNumberOrTag
 };
+use alloy_primitives::{Address, Bytes, B256, B64, U256, U64};
 use reth_rpc_server_types::{result::internal_rpc_err, ToRpcResult};
+
 use reth_rpc_types::{
-    serde_helpers::JsonStorageKey, simulate::{SimBlock, SimulatedBlock}, state::{EvmOverrides, StateOverride}, BlockOverrides, BlockTransactions, Bundle, EIP1186AccountProofResponse, EthCallResponse, FeeHistory, Header, Index, StateContext, SyncStatus, TransactionRequest, Work
+    serde_helpers::JsonStorageKey, simulate::{SimBlock, SimulatedBlock}, state::{EvmOverrides, StateOverride}, AnyTransactionReceipt, BlockOverrides, BlockTransactions, Bundle, EIP1186AccountProofResponse, EthCallResponse, FeeHistory, Header, Index, StateContext, SyncStatus, TransactionRequest, Work
 };
+
 use revm_inspectors::tracing::parity::populate_state_diff;
 use revm_inspectors::tracing::TracingInspectorConfig;
 use tracing::trace;
@@ -383,7 +387,7 @@ impl<T>
         RpcReceipt<T::NetworkTypes>,
     > for T
 where
-    T: FullEthApi,
+    T: FullEthApi<NetworkTypes: Network<ReceiptResponse = AnyTransactionReceipt>>,
     jsonrpsee_types::error::ErrorObject<'static>: From<T::Error>,
 {
     /// Handler for: `eth_protocolVersion`

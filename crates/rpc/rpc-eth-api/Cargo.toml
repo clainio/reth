@@ -42,8 +42,8 @@ serde = { workspace = true, features = ["derive"] }
 
 # ethereum
 alloy-dyn-abi = { workspace = true, features = ["eip712"] }
-alloy-network.workspace = true
 alloy-json-rpc.workspace = true
+alloy-network.workspace = true
 
 # rpc
 jsonrpsee = { workspace = true, features = ["server", "macros"] }
