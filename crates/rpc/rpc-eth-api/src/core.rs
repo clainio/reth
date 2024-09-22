@@ -5,10 +5,10 @@ use std::collections:: HashSet;
 use alloy_consensus::TxEnvelope;
 use alloy_dyn_abi::TypedData;
 use alloy_json_rpc::RpcObject;
+use alloy_network::{ReceiptResponse, TransactionResponse};
 use alloy_rpc_types_trace::parity::{ TraceResultsWithTransactionHash, TraceType};
 use futures::join;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc, types::ErrorObjectOwned};
-use alloy_network::Network;
 use reth_primitives::{
     transaction::AccessListResult, BlockId, BlockNumberOrTag
 };
@@ -16,7 +16,7 @@ use alloy_primitives::{Address, Bytes, B256, B64, U256, U64};
 use reth_rpc_server_types::{result::internal_rpc_err, ToRpcResult};
 
 use reth_rpc_types::{
-    serde_helpers::JsonStorageKey, simulate::{SimBlock, SimulatedBlock}, state::{EvmOverrides, StateOverride}, AnyTransactionReceipt, BlockOverrides, BlockTransactions, Bundle, EIP1186AccountProofResponse, EthCallResponse, FeeHistory, Header, Index, StateContext, SyncStatus, TransactionRequest, Work
+    serde_helpers::JsonStorageKey, simulate::{SimBlock, SimulatePayload, SimulatedBlock}, state::{EvmOverrides, StateOverride}, AnyTransactionReceipt, BlockOverrides, BlockTransactions, Bundle, EIP1186AccountProofResponse, EthCallResponse, FeeHistory, Header, Index, StateContext, SyncStatus, TransactionRequest, Work
 };
 
 use revm_inspectors::tracing::parity::populate_state_diff;
@@ -230,9 +230,9 @@ pub trait EthApi<T: RpcObject, B: RpcObject, R: RpcObject> {
     #[method(name = "simulateV1")]
     async fn simulate_v1(
         &self,
-        opts: SimBlock,
+        opts: SimulatePayload,
         block_number: Option<BlockId>,
-    ) -> RpcResult<Vec<SimulatedBlock>>;
+    ) -> RpcResult<Vec<SimulatedBlock<B>>>;
 
     /// Executes a new message call immediately without creating a transaction on the block chain.
     #[method(name = "call")]
@@ -387,7 +387,7 @@ impl<T>
         RpcReceipt<T::NetworkTypes>,
     > for T
 where
-    T: FullEthApi<NetworkTypes: Network<ReceiptResponse = AnyTransactionReceipt>>,
+    T: FullEthApi,
     jsonrpsee_types::error::ErrorObject<'static>: From<T::Error>,
 {
     /// Handler for: `eth_protocolVersion`
@@ -605,7 +605,7 @@ where
         };
 
         let trx_traces = trx_traces_handle_res?;
-        let trx_receipts: Vec<reth_rpc_types::WithOtherFields<reth_rpc_types::TransactionReceipt<reth_rpc_types::AnyReceiptEnvelope<reth_rpc_types::Log>>>> = trx_receipts_handle_res?;
+        let trx_receipts = trx_receipts_handle_res?;
         
         let block_reward_traces = block_rewards_handle_res?;
 
@@ -634,14 +634,14 @@ where
         if let BlockTransactions::Full(transactions) = block.transactions {
 
             let trx_iter = transactions.into_iter();
-            let receipts_iter: std::vec::IntoIter<reth_rpc_types::WithOtherFields<reth_rpc_types::TransactionReceipt<data::AnyReceiptEnvelope<reth_rpc_types::Log>>>> = trx_receipts.into_iter();
+            let receipts_iter = trx_receipts.into_iter();
             let trace_iter = trx_traces.into_iter();
 
             for ((trx, receipt), trace) in trx_iter.zip(receipts_iter).zip(trace_iter){
-               if trx.hash != trace.transaction_hash || trx.hash != receipt.transaction_hash{
+               if trx.tx_hash() != trace.transaction_hash || trx.tx_hash() != receipt.transaction_hash(){
                 let trx_trace_hash_error = ErrorObjectOwned::owned(
                     2,
-                    format!("Mismatch between transaction hash and corresponding trace hash or receipt hash {}", trx.hash),
+                    format!("Mismatch between transaction hash and corresponding trace hash or receipt hash {}", trx.tx_hash()),
                     None::<()> 
                 );
                 return Err(trx_trace_hash_error)    
@@ -689,7 +689,7 @@ where
                     if tx_sig.is_none() || tx_message_hash.is_none(){
                         let trx_sig_error = ErrorObjectOwned::owned(
                             1,
-                            format!("Signature not extracted from transaction {}", trx.hash),
+                            format!("Signature not extracted from transaction {}", trx.tx_hash()),
                             None::<()> 
                         );
                         return Err(trx_sig_error)    
@@ -707,7 +707,7 @@ where
                             let alloy_pub_key_err = ErrorObjectOwned::owned(
                                 1,
                                 format!("Public key not extracted from message and signature, error: {}, transaction hash: {}"
-                                , p_key_err, trx.hash),
+                                , p_key_err, trx.tx_hash()),
                                 None::<()>
                             );
                             return Err(alloy_pub_key_err);
@@ -720,10 +720,10 @@ where
                 }
             }
 
-                if check_address != trx.from{
+                if check_address != trx.from(){
                     let trx_pub_key_addr_error = ErrorObjectOwned::owned(
                         1,
-                        format!("Address doesn't match public key to address for {}", trx.hash),
+                        format!("Address doesn't match public key to address for {}", trx.tx_hash()),
                         None::<()> 
                     );
                     return Err(trx_pub_key_addr_error)
@@ -825,7 +825,9 @@ where
         hash: B256,
     ) -> RpcResult<Option<RpcTransaction<T::NetworkTypes>>> {
         trace!(target: "rpc::eth", ?hash, "Serving eth_getTransactionByHash");
-        Ok(EthTransactions::transaction_by_hash(self, hash).await?.map(Into::into))
+        Ok(EthTransactions::transaction_by_hash(self, hash)
+            .await?
+            .map(|tx| tx.into_transaction::<T::TransactionCompat>()))
     }
 
     /// Handler for: `eth_getRawTransactionByBlockHashAndIndex`
@@ -944,11 +946,11 @@ where
     /// Handler for: `eth_simulateV1`
     async fn simulate_v1(
         &self,
-        opts: SimBlock,
+        payload: SimulatePayload,
         block_number: Option<BlockId>,
-    ) -> RpcResult<Vec<SimulatedBlock>> {
+    ) -> RpcResult<Vec<SimulatedBlock<RpcBlock<T::NetworkTypes>>>> {
         trace!(target: "rpc::eth", ?block_number, "Serving eth_simulateV1");
-        Ok(EthCall::simulate_v1(self, opts, block_number).await?)
+        Ok(EthCall::simulate_v1(self, payload, block_number).await?)
     }
 
     /// Handler for: `eth_call`
