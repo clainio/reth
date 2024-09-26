@@ -1,16 +1,15 @@
 //! Loads chain metadata.
 
-use std::sync::Arc;
 use alloy_rpc_types_trace::parity::LocalizedTransactionTrace;
 
 use alloy_primitives::{Address, U256, U64};
+use alloy_rpc_types::{Stage, SyncInfo, SyncStatus};
 use futures::Future;
-use reth_chainspec::{ChainInfo, ChainSpec};
+use reth_chainspec::{ChainInfo, EthereumHardforks};
 use reth_errors::{RethError, RethResult};
 use reth_network_api::NetworkInfo;
 use reth_primitives::Header;
 use reth_provider::{BlockNumReader, ChainSpecProvider, StageCheckpointReader};
-use reth_rpc_types::{Stage, SyncInfo, SyncStatus};
 
 use super::EthSigner;
 
@@ -22,7 +21,7 @@ pub trait EthApiSpec: Send + Sync {
     /// Returns a handle for reading data from disk.
     fn provider(
         &self,
-    ) -> impl ChainSpecProvider<ChainSpec = ChainSpec> + BlockNumReader + StageCheckpointReader;
+    ) -> impl ChainSpecProvider<ChainSpec: EthereumHardforks> + BlockNumReader + StageCheckpointReader;
 
     /// Returns a handle for reading network data summary.
     fn network(&self) -> impl NetworkInfo;
@@ -90,10 +89,6 @@ pub trait EthApiSpec: Send + Sync {
         Ok(status)
     }
 
-    /// Returns the configured [`ChainSpec`].
-    fn chain_spec(&self) -> Arc<ChainSpec> {
-        self.provider().chain_spec()
-    }
     ///Calculate block rewards
     fn calculate_base_block_reward(&self, header: &Header) -> Result<Option<u128>, reth_rpc_server_types::RethRpcModule>;
 

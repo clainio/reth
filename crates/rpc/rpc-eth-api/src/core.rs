@@ -4,20 +4,22 @@
 use std::collections:: HashSet;
 use alloy_consensus::TxEnvelope;
 use alloy_dyn_abi::TypedData;
+use alloy_eips::eip2930::AccessListResult;
 use alloy_json_rpc::RpcObject;
 use alloy_network::{ReceiptResponse, TransactionResponse};
 use alloy_rpc_types_trace::parity::{ TraceResultsWithTransactionHash, TraceType};
 use futures::join;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc, types::ErrorObjectOwned};
 use reth_primitives::{
-    transaction::AccessListResult, BlockId, BlockNumberOrTag
+ BlockId, BlockNumberOrTag
 };
 use alloy_primitives::{Address, Bytes, B256, B64, U256, U64};
 use reth_rpc_server_types::{result::internal_rpc_err, ToRpcResult};
 
-use reth_rpc_types::{
-    serde_helpers::JsonStorageKey, simulate::{SimBlock, SimulatePayload, SimulatedBlock}, state::{EvmOverrides, StateOverride}, AnyTransactionReceipt, BlockOverrides, BlockTransactions, Bundle, EIP1186AccountProofResponse, EthCallResponse, FeeHistory, Header, Index, StateContext, SyncStatus, TransactionRequest, Work
+use alloy_rpc_types::{
+    serde_helpers::JsonStorageKey, simulate::{SimulatePayload, SimulatedBlock}, state::{EvmOverrides, StateOverride}, Block, BlockOverrides, BlockTransactions, Bundle, EIP1186AccountProofResponse, EthCallResponse, FeeHistory, Header, Index, StateContext, SyncStatus, Work
 };
+use alloy_rpc_types_eth::transaction::TransactionRequest;
 
 use revm_inspectors::tracing::parity::populate_state_diff;
 use revm_inspectors::tracing::TracingInspectorConfig;
@@ -28,7 +30,6 @@ use crate::{
     RpcBlock, RpcReceipt, RpcTransaction,
 };
 use revm_primitives::FixedBytes;
-use reth_rpc_types::Block;
 use crate::helpers::data::{self, EnrichedBlock, EnrichedTransaction};
 use alloy_primitives::Signature as Alloy_Signature;
 use revm_primitives::hex;
@@ -295,7 +296,7 @@ pub trait EthApi<T: RpcObject, B: RpcObject, R: RpcObject> {
         &self,
         address: Address,
         block: BlockId,
-    ) -> RpcResult<Option<reth_rpc_types::Account>>;
+    ) -> RpcResult<Option<alloy_rpc_types::Account>>;
 
     /// Introduced in EIP-1559, returns suggestion for the priority for dynamic fee transactions.
     #[method(name = "maxPriorityFeePerGas")]
@@ -517,11 +518,11 @@ where
                 logs_bloom: header.logs_bloom, 
                 difficulty: header.total_difficulty.unwrap_or(U256::ZERO), 
                 number: header.number, 
-                gas_limit: header.gas_limit as u64, 
-                gas_used: header.gas_used as u64, 
+                gas_limit: header.gas_limit, 
+                gas_used: header.gas_used, 
                 timestamp: header.timestamp, 
                 mix_hash: header.mix_hash.unwrap(), 
-                nonce: 0, 
+                nonce: header.nonce.unwrap_or_default(), 
                 base_fee_per_gas:None, 
                 blob_gas_used: None,
                 excess_blob_gas: None, 
@@ -1020,7 +1021,7 @@ where
         &self,
         address: Address,
         block: BlockId,
-    ) -> RpcResult<Option<reth_rpc_types::Account>> {
+    ) -> RpcResult<Option<alloy_rpc_types::Account>> {
         trace!(target: "rpc::eth", "Serving eth_getAccount");
         Ok(EthState::get_account(self, address, block).await?)
     }

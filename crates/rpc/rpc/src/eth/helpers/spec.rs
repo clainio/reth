@@ -1,11 +1,11 @@
-use reth_chainspec::{ChainSpec, EthereumHardforks};
+use alloy_rpc_types_trace::parity::{LocalizedTransactionTrace, RewardAction, RewardType};
+use reth_chainspec:: EthereumHardforks;
 use reth_consensus_common::calc::{base_block_reward, base_block_reward_pre_merge, block_reward, ommer_reward};
 use reth_network_api::NetworkInfo;
 use reth_primitives::Header;
 use alloy_primitives::U256;
 use reth_provider::{BlockNumReader, ChainSpecProvider, StageCheckpointReader};
 use reth_rpc_eth_api::helpers:: EthApiSpec;
-use reth_rpc_types::trace::parity::{LocalizedTransactionTrace, RewardAction, RewardType};
 use reth_transaction_pool::TransactionPool;
 
 use crate::{trace::reward_trace, EthApi};
@@ -13,14 +13,16 @@ use crate::{trace::reward_trace, EthApi};
 impl<Provider, Pool, Network, EvmConfig> EthApiSpec for EthApi<Provider, Pool, Network, EvmConfig>
 where
     Pool: TransactionPool + 'static,
-    Provider:
-        ChainSpecProvider<ChainSpec = ChainSpec> + BlockNumReader + StageCheckpointReader + 'static,
+    Provider: ChainSpecProvider<ChainSpec: EthereumHardforks>
+        + BlockNumReader
+        + StageCheckpointReader
+        + 'static,
     Network: NetworkInfo + 'static,
     EvmConfig: Send + Sync,
 {
     fn provider(
         &self,
-    ) -> impl ChainSpecProvider<ChainSpec = ChainSpec> + BlockNumReader + StageCheckpointReader
+    ) -> impl ChainSpecProvider<ChainSpec: EthereumHardforks> + BlockNumReader + StageCheckpointReader
     {
         self.inner.provider()
     }

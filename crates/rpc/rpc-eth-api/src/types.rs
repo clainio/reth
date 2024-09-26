@@ -4,8 +4,8 @@ use std::{error::Error, fmt};
 use alloy_rpc_types_eth::Transaction;
 
 use alloy_network::{AnyNetwork, Network};
+use alloy_rpc_types::{serde_helpers::WithOtherFields, AnyTransactionReceipt, Block};
 use reth_rpc_eth_types::EthApiError;
-use reth_rpc_types::{AnyTransactionReceipt, Block, WithOtherFields};
 use reth_rpc_types_compat::TransactionCompat;
 
 use crate::{AsEthApiError, FromEthApiError, FromEvmError};
@@ -23,7 +23,7 @@ pub trait EthApiTypes: Send + Sync + Clone {
     /// Blockchain primitive types, specific to network, e.g. block and transaction.
     type NetworkTypes: Network<
         TransactionResponse = WithOtherFields<Transaction>, 
-        HeaderResponse = reth_rpc_types::Header,
+        HeaderResponse = alloy_rpc_types::Header,
         ReceiptResponse = AnyTransactionReceipt>;
     /// Conversion methods for transaction RPC type.
     type TransactionCompat: Send + Sync + Clone + fmt::Debug;

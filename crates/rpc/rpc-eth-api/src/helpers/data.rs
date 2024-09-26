@@ -1,12 +1,12 @@
 //! RPC types for transactions
 
 use alloy_rpc_types;
+use alloy_rpc_types::serde_helpers::WithOtherFields;
+use alloy_rpc_types::Block;
 use alloy_rpc_types_trace::parity::LocalizedTransactionTrace;
+use alloy_rpc_types_eth::Transaction;
 
 use alloy_rpc_types_trace::parity::TraceResults;
-use reth_rpc_types::Block;
-use reth_rpc_types::Transaction;
-use reth_rpc_types::WithOtherFields;
 use serde::{Deserialize, Serialize};
 
 pub use alloy_consensus::BlobTransactionSidecar;
@@ -15,8 +15,6 @@ pub use alloy_eips::eip2930::{AccessList, AccessListItem, AccessListWithGasUsed}
 pub use alloy_rpc_types::TransactionInfo;
 
 pub use alloy_rpc_types::ConversionError;
-
-pub use reth_rpc_types::optimism::OptimismTransactionReceiptFields;
 
 pub use alloy_consensus::{AnyReceiptEnvelope, Receipt, ReceiptEnvelope, ReceiptWithBloom};
 pub use alloy_rpc_types::AnyTransactionReceipt;
