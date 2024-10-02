@@ -6,7 +6,7 @@ use alloy_consensus::TxEnvelope;
 use alloy_dyn_abi::TypedData;
 use alloy_eips::eip2930::AccessListResult;
 use alloy_json_rpc::RpcObject;
-use alloy_network::{ReceiptResponse, TransactionResponse};
+use alloy_network::{ ReceiptResponse, TransactionResponse};
 use alloy_rpc_types_trace::parity::{ TraceResultsWithTransactionHash, TraceType};
 use futures::join;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc, types::ErrorObjectOwned};
@@ -26,8 +26,7 @@ use revm_inspectors::tracing::TracingInspectorConfig;
 use tracing::trace;
 
 use crate::{
-    helpers::{EthApiSpec, EthBlocks, EthCall, EthFees, EthState, EthTransactions, FullEthApi},
-    RpcBlock, RpcReceipt, RpcTransaction,
+    helpers::{EthApiSpec, EthBlocks, EthCall, EthFees, EthState, EthTransactions, FullEthApi},RpcBlock, RpcReceipt, RpcTransaction
 };
 use revm_primitives::FixedBytes;
 use crate::helpers::data::{self, EnrichedBlock, EnrichedTransaction};
@@ -486,8 +485,17 @@ where
         
         let receipts_task = tokio::spawn({
             let self_clone = self.clone();
+            
             async move{
-                EthBlocks::block_receipts(&self_clone, BlockId::Number(number)).await
+                #[cfg(feature = "optimism")]
+                {
+                    EthBlocks::block_receipts_op(&self_clone, BlockId::Number(number)).await
+                }
+
+                #[cfg(not(feature = "optimism"))]
+                {
+                    EthBlocks::block_receipts_eth(&self_clone, BlockId::Number(number)).await
+                }
             }
         });
 
@@ -610,7 +618,7 @@ where
         
         let block_reward_traces = block_rewards_handle_res?;
 
-        let block = EthBlocks::rpc_block(self, reth_primitives::BlockId::Number(number), true).await?.unwrap();
+        let block = EthBlocks::rpc_block_typed(self, reth_primitives::BlockId::Number(number), true).await?.unwrap();
 
         if trx_receipts.len() != block.transactions.len(){
             let trx_trace_len_error = ErrorObjectOwned::owned(

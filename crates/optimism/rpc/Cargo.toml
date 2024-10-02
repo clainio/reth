@@ -32,6 +32,8 @@ reth-evm-optimism.workspace = true
 reth-optimism-consensus.workspace = true
 reth-optimism-forks.workspace = true
 
+alloy-rpc-types-trace.workspace = true
+
 # ethereum
 alloy-primitives.workspace = true
 alloy-rpc-types-eth.workspace = true

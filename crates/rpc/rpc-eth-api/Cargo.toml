@@ -39,6 +39,8 @@ alloy-primitives.workspace = true
 
 serde = { workspace = true, features = ["derive"] }
 
+op-alloy-rpc-types.workspace = true
+
 # ethereum
 alloy-dyn-abi = { workspace = true, features = ["eip712"] }
 alloy-json-rpc.workspace = true

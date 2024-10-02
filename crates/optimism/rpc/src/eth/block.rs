@@ -1,5 +1,7 @@
 //! Loads and formats OP block RPC response.
 
+use std::future::Future;
+
 use alloy_rpc_types::BlockId;
 use op_alloy_network::Network;
 use op_alloy_rpc_types::OpTransactionReceipt;
@@ -8,8 +10,7 @@ use reth_node_api::{FullNodeComponents, NodeTypes};
 use reth_primitives::TransactionMeta;
 use reth_provider::{BlockReaderIdExt, HeaderProvider};
 use reth_rpc_eth_api::{
-    helpers::{EthBlocks, LoadBlock, LoadPendingBlock, LoadReceipt, SpawnBlocking},
-    RpcReceipt,
+    helpers::{EthBlocks, LoadBlock, LoadPendingBlock, LoadReceipt, SpawnBlocking}, types::{EthRpcReceipt, OpRpcReceipt}, RpcReceipt
 };
 use reth_rpc_eth_types::EthStateCache;
 
@@ -80,6 +81,73 @@ where
 
         Ok(None)
     }
+
+    async fn block_receipts_op(
+        &self,
+        block_id: BlockId,
+    ) -> Result<Option<Vec<OpRpcReceipt>>, Self::Error>
+    where
+        Self: LoadReceipt,
+    {
+        if let Some((block, receipts)) = self.load_block_and_receipts(block_id).await? {
+            let block_number = block.number;
+            let base_fee = block.base_fee_per_gas;
+            let block_hash = block.hash();
+            let excess_blob_gas = block.excess_blob_gas;
+            let timestamp = block.timestamp;
+            let block = block.unseal();
+
+            let l1_block_info =
+                reth_evm_optimism::extract_l1_info(&block).map_err(OpEthApiError::from)?;
+
+            return block
+                .body
+                .transactions
+                .into_iter()
+                .zip(receipts.iter())
+                .enumerate()
+                .map(|(idx, (ref tx, receipt))| -> Result<_, _> {
+                    let meta = TransactionMeta {
+                        tx_hash: tx.hash,
+                        index: idx as u64,
+                        block_hash,
+                        block_number,
+                        base_fee: base_fee.map(|base_fee| base_fee as u64),
+                        excess_blob_gas: excess_blob_gas
+                            .map(|excess_blob_gas| excess_blob_gas as u64),
+                        timestamp,
+                    };
+
+                    Ok(OpReceiptBuilder::new(
+                        &self.inner.provider().chain_spec(),
+                        tx,
+                        meta,
+                        receipt,
+                        &receipts,
+                        l1_block_info.clone(),
+                    )?
+                    .build())
+                })
+                .collect::<Result<Vec<_>, Self::Error>>()
+                .map(Some)
+        }
+
+        Ok(None)
+    }
+    
+    #[allow(refining_impl_trait)]
+    fn block_receipts_eth(
+        &self,
+        block_id: BlockId,
+    ) -> impl Future<Output = Result<Option<Vec<EthRpcReceipt>>, Self::Error>> + Send
+    where
+        Self: LoadReceipt {
+        let _ = block_id;
+            async move{
+                Ok(None)
+            }
+    }
+
 }
 
 impl<N> LoadBlock for OpEthApi<N>
