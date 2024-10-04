@@ -602,7 +602,7 @@ where
         
         let block_rewards_handle_res = match block_rewards_handle {
             Ok(handle_res) =>{
-                Ok(handle_res.unwrap())
+                Ok(handle_res.unwrap_or_default())
             }
             Err(handle_err)=> {
                Err(ErrorObjectOwned::owned(
@@ -659,6 +659,20 @@ where
                let mut alloy_public_key = String::new();
                let mut check_address:Address = Default::default();
 
+               let is_bridge:bool;
+
+               #[cfg(not(feature = "optimism"))]
+               {
+                    is_bridge = false;
+               }
+
+               #[cfg(feature = "optimism")]
+               {
+                    is_bridge = trx.source_hash.is_some();
+               }
+
+               if !is_bridge{
+                
                match TxEnvelope::try_from(trx.inner.clone()) {
                    Ok(tx_envelope) => {
                         let tx_message_hash: Option<FixedBytes<32>>;
@@ -737,10 +751,14 @@ where
                     );
                     return Err(trx_pub_key_addr_error)
                 }
-
+            }
                 enriched_trxs.push(data::EnrichedTransaction{
                         inner: trx,
-                        public_key: alloy_public_key,
+                        public_key: if !alloy_public_key.is_empty(){
+                            alloy_public_key
+                        }else{
+                            "0x0".to_string()
+                        }.to_string(),
                         receipts: receipt,
                         trace : trace.full_trace
                 })
