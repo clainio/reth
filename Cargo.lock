@@ -8168,6 +8168,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-rpc-types",
  "alloy-rpc-types-eth",
+ "alloy-rpc-types-trace",
  "derive_more 1.0.0",
  "jsonrpsee-types",
  "op-alloy-consensus",
@@ -8656,6 +8657,7 @@ dependencies = [
 name = "reth-rpc-eth-api"
 version = "1.0.8"
 dependencies = [
+ "alloy-consensus",
  "alloy-dyn-abi",
  "alloy-eips",
  "alloy-json-rpc",
@@ -8664,12 +8666,14 @@ dependencies = [
  "alloy-rpc-types",
  "alloy-rpc-types-eth",
  "alloy-rpc-types-mev",
+ "alloy-rpc-types-trace",
  "async-trait",
  "auto_impl",
  "dyn-clone",
  "futures",
  "jsonrpsee",
  "jsonrpsee-types",
+ "op-alloy-rpc-types",
  "parking_lot 0.12.3",
  "reth-chainspec",
  "reth-errors",
@@ -8688,6 +8692,7 @@ dependencies = [
  "revm",
  "revm-inspectors",
  "revm-primitives",
+ "serde",
  "tokio",
  "tracing",
 ]
