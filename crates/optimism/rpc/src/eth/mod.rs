@@ -14,7 +14,7 @@ use std::{fmt, sync::Arc};
 use alloy_primitives::U256;
 use derive_more::Deref;
 use op_alloy_network::Optimism;
-use reth_chainspec::{ChainSpec, EthereumHardforks};
+use reth_chainspec::EthereumHardforks;
 use reth_evm::ConfigureEvm;
 use reth_network_api::NetworkInfo;
 use reth_node_api::{BuilderProvider, FullNodeComponents, FullNodeTypes, NodeTypes};
@@ -69,7 +69,7 @@ pub struct OpEthApi<N: FullNodeComponents> {
     inner: Arc<EthApiNodeBackend<N>>,
     /// Sequencer client, configured to forward submitted transactions to sequencer of given OP
     /// network.
-    sequencer_client: OnceCell<SequencerClient>,
+    sequencer_client: Arc<OnceCell<SequencerClient>>,
 }
 
 impl<N: FullNodeComponents> OpEthApi<N> {
@@ -95,7 +95,7 @@ impl<N: FullNodeComponents> OpEthApi<N> {
             ctx.config.proof_permits,
         );
 
-        Self { inner: Arc::new(inner), sequencer_client: OnceCell::new() }
+        Self { inner: Arc::new(inner), sequencer_client: Arc::new(OnceCell::new()) }
     }
 }
 
@@ -269,7 +269,7 @@ where
 
 impl<N> AddDevSigners for OpEthApi<N>
 where
-    N: FullNodeComponents<Types: NodeTypes<ChainSpec = ChainSpec>>,
+    N: FullNodeComponents<Types: NodeTypes<ChainSpec: EthereumHardforks>>,
 {
     fn with_dev_accounts(&self) {
         *self.signers().write() = DevSigner::random_signers(20)

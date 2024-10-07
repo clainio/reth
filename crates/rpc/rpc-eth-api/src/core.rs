@@ -1,7 +1,6 @@
 //! Implementation of the [`jsonrpsee`] generated [`EthApiServer`] trait. Handles RPC requests for
 //! the `eth_` namespace.
 //! 
-use std::collections:: HashSet;
 use alloy_consensus::TxEnvelope;
 use alloy_dyn_abi::TypedData;
 use alloy_eips::eip2930::AccessListResult;
@@ -13,7 +12,7 @@ use jsonrpsee::{core::RpcResult, proc_macros::rpc, types::ErrorObjectOwned};
 use reth_primitives::{
  BlockId, BlockNumberOrTag
 };
-use alloy_primitives::{Address, Bytes, B256, B64, U256, U64};
+use alloy_primitives::{Address, Bytes, B256, B64, U256, U64, map::HashSet};
 use reth_rpc_server_types::{result::internal_rpc_err, ToRpcResult};
 
 use alloy_rpc_types::{
@@ -459,7 +458,8 @@ where
 
             async move {
                 let number = number.as_number().unwrap();
-                let trace_types:HashSet<TraceType> = HashSet::from([TraceType::Trace]);
+                let mut trace_types:HashSet<TraceType> = Default::default();
+                trace_types.insert(TraceType::Trace);
 
                 self_clone.trace_block_with(
                     number.into(),

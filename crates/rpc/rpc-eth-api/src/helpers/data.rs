@@ -26,9 +26,9 @@ pub use alloy_rpc_types::{Parity, Signature};
 use op_alloy_rpc_types::Transaction as Optransaction;
 
 use alloy_network::{AnyNetwork, Network};
-use alloy_primitives::TxKind;
+use alloy_primitives::{Address, TxKind};
 //use alloy_serde::WithOtherFields;
-use reth_primitives::{Address, TransactionSignedEcRecovered};
+use reth_primitives::TransactionSignedEcRecovered;
 use reth_rpc_types_compat::{
     transaction::{from_primitive_signature, GasPrice},
     TransactionCompat,
@@ -119,7 +119,7 @@ where
                 max_fee_per_gas,
                 max_priority_fee_per_gas: signed_tx.max_priority_fee_per_gas(),
                 signature: Some(signature),
-                gas: signed_tx.gas_limit() as u128,
+                gas: signed_tx.gas_limit(),
                 input: signed_tx.input().clone(),
                 chain_id,
                 access_list,

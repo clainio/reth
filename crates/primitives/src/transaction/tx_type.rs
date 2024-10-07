@@ -1,4 +1,4 @@
-use crate::{U64, U8};
+use alloy_primitives::{U64, U8};
 use alloy_rlp::{Decodable, Encodable};
 use serde::{Deserialize, Serialize};
 
@@ -246,7 +246,7 @@ impl From<alloy_consensus::TxType> for TxType {
 
 #[cfg(test)]
 mod tests {
-    use crate::hex;
+    use alloy_primitives::hex;
     use rand::Rng;
     use reth_codecs::Compact;
 

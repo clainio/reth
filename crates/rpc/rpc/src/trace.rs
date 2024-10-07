@@ -1,6 +1,6 @@
-use std::{collections::HashSet, sync::Arc};
+use std::sync::Arc;
 
-use alloy_primitives::{Bytes, B256, U256};
+use alloy_primitives::{map::HashSet, Bytes, B256, U256};
 use alloy_rpc_types::{
     state::{EvmOverrides, StateOverride},
     BlockOverrides, Index,
@@ -153,7 +153,6 @@ where
         let at = block_id.unwrap_or(BlockId::pending());
         let (cfg, block_env, at) = self.inner.eth_api.evm_env_at(at).await?;
 
-        let gas_limit = self.inner.eth_api.call_gas_limit();
         let this = self.clone();
         // execute all transactions on top of each other and record the traces
         self.eth_api()
@@ -168,7 +167,6 @@ where
                         cfg.clone(),
                         block_env.clone(),
                         call,
-                        gas_limit,
                         &mut db,
                         Default::default(),
                     )?;
