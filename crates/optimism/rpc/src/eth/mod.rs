@@ -41,6 +41,8 @@ use reth_transaction_pool::TransactionPool;
 
 use crate::{OpEthApiError, OpTxBuilder, SequencerClient};
 
+use alloy_rpc_types_trace::parity::LocalizedTransactionTrace;
+
 /// Adapter for [`EthApiInner`], which holds all the data required to serve core `eth_` API.
 pub type EthApiNodeBackend<N> = EthApiInner<
     <N as FullNodeTypes>::Provider,
@@ -131,6 +133,34 @@ where
     #[inline]
     fn signers(&self) -> &parking_lot::RwLock<Vec<Box<dyn EthSigner>>> {
         self.inner.signers()
+    }
+
+    fn extract_reward_traces(
+        &self,
+        header: &Header,
+        ommers: &[Header],
+        base_block_reward: u128,
+    ) -> Vec<LocalizedTransactionTrace> {
+        let _ = base_block_reward;
+        let _ = header;
+        let traces = Vec::with_capacity(ommers.len() + 1);
+
+        traces
+    }
+
+    fn calculate_base_block_reward(&self, header: &Header) -> Result<Option<u128>, reth_rpc_server_types::RethRpcModule> {
+        let _ = header;
+        
+        Ok(None)
+    }
+
+    async fn get_block_rewards(
+        &self,
+        block_header: &Header, omners: &[Header] )-> Result<Option<Vec<LocalizedTransactionTrace>>, reth_rpc_server_types::RethRpcModule>{
+        let _ = omners;
+        let _ = block_header; 
+ 
+            Ok(None)
     }
 }
 
