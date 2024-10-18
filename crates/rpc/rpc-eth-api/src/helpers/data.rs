@@ -1,6 +1,7 @@
 //! RPC types for transactions
 
-use alloy_rpc_types;
+use alloy_consensus::Transaction as _;
+
 use alloy_rpc_types::serde_helpers::WithOtherFields;
 use alloy_rpc_types::Block;
 use alloy_rpc_types_trace::parity::LocalizedTransactionTrace;
@@ -97,8 +98,9 @@ where
         let GasPrice { gas_price, max_fee_per_gas } =
             Self::gas_price(&signed_tx, base_fee.map(|fee| fee as u64));
 
+        let input = signed_tx.input().to_vec().into();
         let chain_id = signed_tx.chain_id();
-        let blob_versioned_hashes = signed_tx.blob_versioned_hashes();
+        let blob_versioned_hashes = signed_tx.blob_versioned_hashes().map(|hs| hs.to_vec());
         let access_list = signed_tx.access_list().cloned();
         let authorization_list = signed_tx.authorization_list().map(|l| l.to_vec());
 
@@ -120,7 +122,7 @@ where
                 max_priority_fee_per_gas: signed_tx.max_priority_fee_per_gas(),
                 signature: Some(signature),
                 gas: signed_tx.gas_limit(),
-                input: signed_tx.input().clone(),
+                input,
                 chain_id,
                 access_list,
                 transaction_type: Some(signed_tx.tx_type() as u8),

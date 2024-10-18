@@ -463,6 +463,7 @@ where
 
                 self_clone.trace_block_with(
                     number.into(),
+                    None,
                     TracingInspectorConfig::from_parity_config(&trace_types),
                     move |tx_info, inspector, res, state, db| {
                         let mut full_trace =
