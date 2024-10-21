@@ -536,7 +536,7 @@ where
                 blob_gas_used: None,
                 excess_blob_gas: None, 
                 parent_beacon_block_root: None, 
-                requests_root: None, 
+                requests_hash: None, 
                 extra_data: header.extra_data
             });
 
