@@ -82,7 +82,11 @@ where
 {
     type Transaction = <AnyNetwork as Network>::TransactionResponse;
 
-    fn fill(tx: TransactionSignedEcRecovered, tx_info: TransactionInfo) -> Self::Transaction {
+    fn fill(
+        &self,
+        tx: TransactionSignedEcRecovered,
+        tx_info: TransactionInfo,
+    ) -> Self::Transaction {
         let signer = tx.signer();
         let signed_tx = tx.into_signed();
 
@@ -157,18 +161,29 @@ pub struct OpTxBuilder;
 impl TransactionCompat for OpTxBuilder {
     type Transaction = Optransaction;
 
-    fn fill(tx: TransactionSignedEcRecovered, tx_info: TransactionInfo) -> Self::Transaction {
+    fn fill(
+        &self,
+        tx: TransactionSignedEcRecovered,
+        tx_info: TransactionInfo,
+    ) -> Self::Transaction {
         let signed_tx = tx.clone().into_signed();
 
-        let inner = EthTxBuilder::fill(tx, tx_info).inner;
+        let mut inner = EthTxBuilder.fill(tx, tx_info).inner;
+
+        if signed_tx.is_deposit() {
+            inner.gas_price = Some(signed_tx.max_fee_per_gas())
+        }
+
+        let deposit_receipt_version = Some(0);
 
         Optransaction {
             inner,
             source_hash: signed_tx.source_hash(),
             mint: signed_tx.mint(),
             // only include is_system_tx if true: <https://github.com/ethereum-optimism/op-geth/blob/641e996a2dcf1f81bac9416cb6124f86a69f1de7/internal/ethapi/api.go#L1518-L1518>
-            is_system_tx: signed_tx.is_deposit().then_some(signed_tx.is_system_transaction()),
-            deposit_receipt_version: None, // todo: how to fill this field?
+            is_system_tx: (signed_tx.is_deposit() && signed_tx.is_system_transaction())
+                .then_some(true),
+            deposit_receipt_version,
         }
     }
 

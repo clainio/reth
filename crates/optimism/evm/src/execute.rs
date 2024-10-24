@@ -10,7 +10,7 @@ use reth_consensus::ConsensusError;
 use reth_evm::{
     execute::{
         BasicBlockExecutorProvider, BlockExecutionError, BlockExecutionStrategy,
-        BlockExecutionStrategyFactory, BlockValidationError, ProviderError,
+        BlockExecutionStrategyFactory, BlockValidationError, ExecuteOutput, ProviderError,
     },
     state_change::post_block_balance_increments,
     system_calls::{OnStateHook, SystemCaller},
@@ -20,10 +20,7 @@ use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_consensus::validate_block_post_execution;
 use reth_optimism_forks::OptimismHardfork;
 use reth_primitives::{BlockWithSenders, Header, Receipt, TxType};
-use reth_revm::{
-    db::{states::bundle_state::BundleRetention, BundleState},
-    Database, State,
-};
+use reth_revm::{Database, State};
 use revm_primitives::{
     db::DatabaseCommit, BlockEnv, CfgEnvWithHandlerCfg, EnvWithHandlerCfg, ResultAndState, U256,
 };
@@ -155,7 +152,7 @@ where
         &mut self,
         block: &BlockWithSenders,
         total_difficulty: U256,
-    ) -> Result<(Vec<Receipt>, u64), Self::Error> {
+    ) -> Result<ExecuteOutput, Self::Error> {
         let env = self.evm_env_for_block(&block.header, total_difficulty);
         let mut evm = self.evm_config.evm_with_env(&mut self.state, env);
 
@@ -240,7 +237,7 @@ where
             });
         }
 
-        Ok((receipts, cumulative_gas_used))
+        Ok(ExecuteOutput { receipts, gas_used: cumulative_gas_used })
     }
 
     fn apply_post_execution_changes(
@@ -269,11 +266,6 @@ where
 
     fn with_state_hook(&mut self, hook: Option<Box<dyn OnStateHook>>) {
         self.system_caller.with_state_hook(hook);
-    }
-
-    fn finish(&mut self) -> BundleState {
-        self.state.merge_transitions(BundleRetention::Reverts);
-        self.state.take_bundle()
     }
 
     fn validate_block_post_execution(
@@ -305,9 +297,10 @@ mod tests {
     use crate::OpChainSpec;
     use alloy_consensus::TxEip1559;
     use alloy_primitives::{b256, Address, StorageKey, StorageValue};
+    use op_alloy_consensus::TxDeposit;
     use reth_chainspec::MIN_TRANSACTION_GAS;
     use reth_evm::execute::{BasicBlockExecutorProvider, BatchExecutor, BlockExecutorProvider};
-    use reth_optimism_chainspec::{optimism_deposit_tx_signature, OpChainSpecBuilder};
+    use reth_optimism_chainspec::OpChainSpecBuilder;
     use reth_primitives::{Account, Block, BlockBody, Signature, Transaction, TransactionSigned};
     use reth_revm::{
         database::StateProviderDatabase, test_utils::StateProviderTest, L1_BLOCK_CONTRACT,
@@ -473,7 +466,7 @@ mod tests {
                 gas_limit: MIN_TRANSACTION_GAS,
                 ..Default::default()
             }),
-            optimism_deposit_tx_signature(),
+            TxDeposit::signature(),
         );
 
         let provider = executor_provider(chain_spec);
