@@ -1,11 +1,14 @@
 //! Loads chain metadata.
 
+use alloy_rpc_types_trace::parity::LocalizedTransactionTrace;
+
 use alloy_primitives::{Address, U256, U64};
 use alloy_rpc_types::{Stage, SyncInfo, SyncStatus};
 use futures::Future;
 use reth_chainspec::{ChainInfo, EthereumHardforks};
 use reth_errors::{RethError, RethResult};
 use reth_network_api::NetworkInfo;
+use reth_primitives::Header;
 use reth_provider::{BlockNumReader, ChainSpecProvider, StageCheckpointReader};
 
 use super::EthSigner;
@@ -85,4 +88,18 @@ pub trait EthApiSpec: Send + Sync {
         };
         Ok(status)
     }
+
+    ///Calculate block rewards
+    fn calculate_base_block_reward(&self, header: &Header) -> Result<Option<u128>, reth_rpc_server_types::RethRpcModule>;
+
+    ///Extract block rewards
+    fn extract_reward_traces(
+        &self,
+        header: &Header,
+        ommers: &[Header],
+        base_block_reward: u128,
+    ) -> Vec<LocalizedTransactionTrace>;
+
+    ///Get block rewards
+    fn get_block_rewards(&self, block_header: &Header, omners: &[Header] )-> impl Future < Output = Result<Option<Vec<LocalizedTransactionTrace>>, reth_rpc_server_types::RethRpcModule>> + Send;
 }
