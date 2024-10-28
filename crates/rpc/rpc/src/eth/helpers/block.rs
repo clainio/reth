@@ -3,6 +3,7 @@
 use std::future::Future;
 
 use alloy_rpc_types::{AnyTransactionReceipt, BlockId};
+use alloy_serde::WithOtherFields;
 use reth_primitives::TransactionMeta;
 use reth_provider::{BlockReaderIdExt, HeaderProvider};
 use reth_rpc_eth_api::{
@@ -17,14 +18,9 @@ where
     Self: LoadBlock<
         Error = EthApiError,
         NetworkTypes: alloy_network::Network<ReceiptResponse = AnyTransactionReceipt>,
+        Provider: HeaderProvider,
     >,
-    Provider: HeaderProvider,
 {
-    #[inline]
-    fn provider(&self) -> impl HeaderProvider {
-        self.inner.provider()
-    }
-
     async fn block_receipts(
         &self,
         block_id: BlockId,
@@ -56,9 +52,9 @@ where
                         excess_blob_gas,
                         timestamp,
                     };
-
                     ReceiptBuilder::new(&tx, meta, receipt, &receipts)
                         .map(|builder| builder.build())
+                        .map(WithOtherFields::new)
                 })
                 .collect::<Result<Vec<_>, Self::Error>>()
                 .map(Some)
@@ -98,9 +94,9 @@ where
                         excess_blob_gas,
                         timestamp,
                     };
-
                     ReceiptBuilder::new(&tx, meta, receipt, &receipts)
                         .map(|builder| builder.build())
+                        .map(WithOtherFields::new)
                 })
                 .collect::<Result<Vec<_>, Self::Error>>()
                 .map(Some)
@@ -129,11 +125,6 @@ where
     Self: LoadPendingBlock + SpawnBlocking,
     Provider: BlockReaderIdExt,
 {
-    #[inline]
-    fn provider(&self) -> impl BlockReaderIdExt {
-        self.inner.provider()
-    }
-
     #[inline]
     fn cache(&self) -> &EthStateCache {
         self.inner.cache()
