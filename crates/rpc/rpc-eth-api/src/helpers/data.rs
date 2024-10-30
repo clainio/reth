@@ -1,6 +1,7 @@
 //! RPC types for transactions
 
 use alloy_consensus::Transaction as _;
+use op_alloy_consensus::DepositTransaction;
 
 use alloy_rpc_types::serde_helpers::WithOtherFields;
 use alloy_rpc_types::Block;
