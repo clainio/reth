@@ -3,15 +3,12 @@
 //! 
 use alloy_consensus::TxEnvelope;
 use alloy_dyn_abi::TypedData;
-use alloy_eips::eip2930::AccessListResult;
+use alloy_eips::{eip2930::AccessListResult, BlockId, BlockNumberOrTag};
 use alloy_json_rpc::RpcObject;
 use alloy_network::{ ReceiptResponse, TransactionResponse};
 use alloy_rpc_types_trace::parity::{ TraceResultsWithTransactionHash, TraceType};
 use futures::join;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc, types::ErrorObjectOwned};
-use reth_primitives::{
- BlockId, BlockNumberOrTag
-};
 use alloy_primitives::{Address, Bytes, B256, B64, U256, U64, map::HashSet};
 use reth_rpc_server_types::{result::internal_rpc_err, ToRpcResult};
 
@@ -619,7 +616,7 @@ where
         
         let block_reward_traces = block_rewards_handle_res?;
 
-        let block = EthBlocks::rpc_block_typed(self, reth_primitives::BlockId::Number(number), true).await?.unwrap();
+        let block = EthBlocks::rpc_block_typed(self, BlockId::Number(number), true).await?.unwrap();
 
         if trx_receipts.len() != block.transactions.len(){
             let trx_trace_len_error = ErrorObjectOwned::owned(

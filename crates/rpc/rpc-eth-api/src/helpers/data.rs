@@ -1,6 +1,8 @@
 //! RPC types for transactions
 
 use alloy_consensus::Transaction as _;
+
+#[cfg(feature = "optimism")]
 use op_alloy_consensus::DepositTransaction;
 
 use alloy_rpc_types::serde_helpers::WithOtherFields;
@@ -25,6 +27,7 @@ pub use alloy_rpc_types::request::{TransactionInput, TransactionRequest};
 
 pub use alloy_rpc_types::{Parity, Signature};
 
+#[cfg(feature = "optimism")]
 use op_alloy_rpc_types::Transaction as Optransaction;
 
 use alloy_network::{AnyNetwork, Network};
@@ -53,7 +56,7 @@ pub struct EnrichedTransaction {
 
     ///Alloy ETH receipts
     #[cfg(not(feature = "optimism"))]
-    pub receipts: AnyTransactionReceipt,
+    pub receipts: alloy_rpc_types_eth::TransactionReceipt,
     ///Alloy Optimism receipts
     #[cfg(feature = "optimism")]
     pub receipts: op_alloy_rpc_types::OpTransactionReceipt,

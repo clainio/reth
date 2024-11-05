@@ -3,16 +3,15 @@
 use std::{error::Error, fmt};
 use alloy_rpc_types_eth::Transaction;
 
-use alloy_network::{AnyNetwork, Network};
-use alloy_rpc_types::{serde_helpers::WithOtherFields, AnyTransactionReceipt, Block};
-use reth_rpc_eth_types::EthApiError;
+use alloy_network:: Network;
+use alloy_rpc_types::{serde_helpers::WithOtherFields, Block};
 use reth_rpc_types_compat::TransactionCompat;
 
 use crate::{AsEthApiError, FromEthApiError, FromEvmError};
 
 /// Network specific `eth` API types.
 pub trait EthApiTypes: Send + Sync + Clone {
-    /// Extension of [`EthApiError`], with network specific errors.
+    /// Extension of [`FromEthApiError`], with network specific errors.
     type Error: Into<jsonrpsee_types::error::ErrorObject<'static>>
         + FromEthApiError
         + AsEthApiError
@@ -28,16 +27,6 @@ pub trait EthApiTypes: Send + Sync + Clone {
 
     /// Returns reference to transaction response builder.
     fn tx_resp_builder(&self) -> &Self::TransactionCompat;
-}
-
-impl EthApiTypes for () {
-    type Error = EthApiError;
-    type NetworkTypes = AnyNetwork;
-    type TransactionCompat = ();
-
-    fn tx_resp_builder(&self) -> &Self::TransactionCompat {
-        self
-    }
 }
 
 /// Adapter for network specific transaction type.
@@ -58,7 +47,7 @@ pub type EthRpcBlock = Block<op_alloy_rpc_types::Transaction, alloy_rpc_types::H
 pub type RpcReceipt<T> = <T as Network>::ReceiptResponse;
 
 /// Adapter for ETH specific receipt type.
-pub type EthRpcReceipt = AnyTransactionReceipt;
+pub type EthRpcReceipt = alloy_rpc_types_eth::TransactionReceipt;
 
 /// Adapter for optimism specific receipt type.
 pub type OpRpcReceipt = op_alloy_rpc_types::OpTransactionReceipt;
