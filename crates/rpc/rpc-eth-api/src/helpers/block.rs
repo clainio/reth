@@ -3,13 +3,13 @@
 use std::sync::Arc;
 
 use alloy_eips::BlockId;
-use alloy_rpc_types::{Block, Header, Index};
+use alloy_rpc_types::{ Block, Header, Index};
 use futures::Future;
 use reth_primitives::{Receipt, SealedBlock, SealedBlockWithSenders};
 use reth_provider::{BlockIdReader, BlockReader, BlockReaderIdExt, HeaderProvider};
 use reth_rpc_types_compat::block::from_block;
 
-use crate::{node::RpcNodeCoreExt, FromEthApiError, FullEthApiTypes, RpcBlock, RpcReceipt};
+use crate::{types::{EthRpcBlock, EthRpcReceipt, OpRpcReceipt},node::RpcNodeCoreExt, FromEthApiError, FullEthApiTypes, RpcBlock, RpcReceipt};
 
 use super::{LoadPendingBlock, LoadReceipt, SpawnBlocking};
 
@@ -70,6 +70,86 @@ pub trait EthBlocks: LoadBlock {
         }
     }
 
+    ///RPC block for ETH
+    #[cfg(not(feature = "optimism"))]
+    fn rpc_block_typed(
+        &self,
+        block_id: BlockId,
+        full: bool,
+    ) -> impl Future<Output = Result<Option<EthRpcBlock>, Self::Error>> + Send
+    where
+        Self: FullEthApiTypes,
+    {
+        use super::data::EthTxBuilder;
+
+        async move {
+            let Some(block) = self.block_with_senders(block_id).await? else { return Ok(None) };
+            let block_hash = block.hash();
+            let mut total_difficulty = self
+                .provider()
+                .header_td_by_number(block.number)
+                .map_err(Self::Error::from_eth_err)?;
+            if total_difficulty.is_none() {
+                // if we failed to find td after we successfully loaded the block, try again using
+                // the hash this only matters if the chain is currently transitioning the merge block and there's a reorg: <https://github.com/paradigmxyz/reth/issues/10941>
+                total_difficulty =
+                    self.provider().header_td(&block.hash()).map_err(Self::Error::from_eth_err)?;
+            }
+
+            let eth_builder = EthTxBuilder;
+
+            let block = from_block::<EthTxBuilder>(
+                (*block).clone().unseal(),
+                total_difficulty.unwrap_or_default(),
+                full.into(),
+                Some(block_hash),
+                &eth_builder,
+            )
+            .map_err(Self::Error::from_eth_err)?;
+            Ok(Some(block))
+        }
+    }
+
+    ///RPC block for Optimism
+    #[cfg(feature = "optimism")]
+    fn rpc_block_typed(
+        &self,
+        block_id: BlockId,
+        full: bool,
+    ) -> impl Future<Output = Result<Option<EthRpcBlock>, Self::Error>> + Send
+    where
+        Self: FullEthApiTypes,
+    {
+        use super::data::OpTxBuilder;
+
+        async move {
+            let Some(block) = self.block_with_senders(block_id).await? else { return Ok(None) };
+            let block_hash = block.hash();
+            let mut total_difficulty = self
+                .provider()
+                .header_td_by_number(block.number)
+                .map_err(Self::Error::from_eth_err)?;
+            if total_difficulty.is_none() {
+                // if we failed to find td after we successfully loaded the block, try again using
+                // the hash this only matters if the chain is currently transitioning the merge block and there's a reorg: <https://github.com/paradigmxyz/reth/issues/10941>
+                total_difficulty =
+                    self.provider().header_td(&block.hash()).map_err(Self::Error::from_eth_err)?;
+            }
+
+            let op_builder = OpTxBuilder;
+
+            let block = from_block::<OpTxBuilder>(
+                (*block).clone().unseal(),
+                total_difficulty.unwrap_or_default(),
+                full.into(),
+                Some(block_hash),
+                &op_builder,
+            )
+            .map_err(Self::Error::from_eth_err)?;
+            Ok(Some(block))
+        }
+    }
+
     /// Returns the number transactions in the given block.
     ///
     /// Returns `None` if the block does not exist
@@ -113,6 +193,26 @@ pub trait EthBlocks: LoadBlock {
         &self,
         block_id: BlockId,
     ) -> impl Future<Output = BlockReceiptsResult<Self::NetworkTypes, Self::Error>> + Send
+    where
+        Self: LoadReceipt;
+
+    /// Helper function for `eth_getBlockReceipts`.
+    ///
+    /// Returns all transaction receipts in block, or `None` if block wasn't found.
+    fn block_receipts_eth(
+        &self,
+        block_id: BlockId,
+    ) -> impl Future<Output = Result<Option<Vec<EthRpcReceipt>>, Self::Error>> + Send
+    where
+        Self: LoadReceipt;
+
+    /// Helper function for `eth_getBlockReceipts`.
+    ///
+    /// Returns all transaction receipts in block, or `None` if block wasn't found.
+    fn block_receipts_op(
+        &self,
+        block_id: BlockId,
+    ) -> impl Future<Output = Result<Option<Vec<OpRpcReceipt>>, Self::Error>> + Send
     where
         Self: LoadReceipt;
 
