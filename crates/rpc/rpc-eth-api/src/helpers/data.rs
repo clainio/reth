@@ -1,14 +1,16 @@
 //! RPC types for transactions
 
+use alloy_consensus::Signed;
 use alloy_consensus::Transaction as _;
 
-#[cfg(feature = "optimism")]
-use op_alloy_consensus::DepositTransaction;
+use alloy_consensus::TxEip4844Variant;
+use alloy_consensus::TxEnvelope;
+use alloy_network::{Ethereum, Network};
 
-use alloy_rpc_types::serde_helpers::WithOtherFields;
 use alloy_rpc_types::Block;
 use alloy_rpc_types_trace::parity::LocalizedTransactionTrace;
 use alloy_rpc_types_eth::Transaction;
+use reth_primitives::{TransactionSigned, TransactionSignedEcRecovered};
 
 use alloy_rpc_types_trace::parity::TraceResults;
 use serde::{Deserialize, Serialize};
@@ -25,19 +27,12 @@ pub use alloy_rpc_types::AnyTransactionReceipt;
 
 pub use alloy_rpc_types::request::{TransactionInput, TransactionRequest};
 
-pub use alloy_rpc_types::{Parity, Signature};
-
+#[cfg(feature = "optimism")]
+use op_alloy_consensus::OpTxEnvelope;
 #[cfg(feature = "optimism")]
 use op_alloy_rpc_types::Transaction as Optransaction;
 
-use alloy_network::{AnyNetwork, Network};
-use alloy_primitives::{Address, TxKind};
-//use alloy_serde::WithOtherFields;
-use reth_primitives::TransactionSignedEcRecovered;
-use reth_rpc_types_compat::{
-    transaction::{from_primitive_signature, GasPrice},
-    TransactionCompat,
-};
+use reth_rpc_types_compat::TransactionCompat;
 
 /// EnrichedTransaction object used in RPC
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -45,7 +40,7 @@ pub struct EnrichedTransaction {
     ///Alloy ETH transaction
     #[cfg(not(feature = "optimism"))]
     #[serde(flatten)]
-    pub inner: WithOtherFields<Transaction>,
+    pub inner: Transaction,
     ///Alloy Optimism transaction
     #[cfg(feature = "optimism")]
     #[serde(flatten)]
@@ -84,76 +79,69 @@ impl TransactionCompat for EthTxBuilder
 where
     Self: Send + Sync,
 {
-    type Transaction = <AnyNetwork as Network>::TransactionResponse;
+    type Transaction = <Ethereum as Network>::TransactionResponse;
 
     fn fill(
         &self,
         tx: TransactionSignedEcRecovered,
         tx_info: TransactionInfo,
     ) -> Self::Transaction {
-        let signer = tx.signer();
-        let signed_tx = tx.into_signed();
+        let from = tx.signer();
+        let TransactionSigned { transaction, signature, hash } = tx.into_signed();
 
-        let to: Option<Address> = match signed_tx.kind() {
-            TxKind::Create => None,
-            TxKind::Call(to) => Some(Address(*to)),
+        let inner: TxEnvelope = match transaction {
+            reth_primitives::Transaction::Legacy(tx) => {
+                Signed::new_unchecked(tx, signature, hash).into()
+            }
+            reth_primitives::Transaction::Eip2930(tx) => {
+                Signed::new_unchecked(tx, signature, hash).into()
+            }
+            reth_primitives::Transaction::Eip1559(tx) => {
+                Signed::new_unchecked(tx, signature, hash).into()
+            }
+            reth_primitives::Transaction::Eip4844(tx) => {
+                Signed::new_unchecked(tx, signature, hash).into()
+            }
+            reth_primitives::Transaction::Eip7702(tx) => {
+                Signed::new_unchecked(tx, signature, hash).into()
+            }
+            #[allow(unreachable_patterns)]
+            _ => unreachable!(),
         };
 
         let TransactionInfo {
-            base_fee, block_hash, block_number, index: transaction_index, ..
+            block_hash, block_number, index: transaction_index, base_fee, ..
         } = tx_info;
 
-        let GasPrice { gas_price, max_fee_per_gas } =
-            Self::gas_price(&signed_tx, base_fee.map(|fee| fee as u64));
+        let effective_gas_price = base_fee
+            .map(|base_fee| {
+                inner.effective_tip_per_gas(base_fee as u64).unwrap_or_default() + base_fee
+            })
+            .unwrap_or_else(|| inner.max_fee_per_gas());
 
-        let input = signed_tx.input().to_vec().into();
-        let chain_id = signed_tx.chain_id();
-        let blob_versioned_hashes = signed_tx.blob_versioned_hashes().map(|hs| hs.to_vec());
-        let access_list = signed_tx.access_list().cloned();
-        let authorization_list = signed_tx.authorization_list().map(|l| l.to_vec());
-
-        let signature = from_primitive_signature(
-            *signed_tx.signature(),
-            signed_tx.tx_type(),
-            signed_tx.chain_id(),
-        );
-
-        WithOtherFields {
-            inner: Transaction {
-                hash: signed_tx.hash(),
-                nonce: signed_tx.nonce(),
-                from: signer,
-                to,
-                value: signed_tx.value(),
-                gas_price,
-                max_fee_per_gas,
-                max_priority_fee_per_gas: signed_tx.max_priority_fee_per_gas(),
-                signature: Some(signature),
-                gas: signed_tx.gas_limit(),
-                input,
-                chain_id,
-                access_list,
-                transaction_type: Some(signed_tx.tx_type() as u8),
-                // These fields are set to None because they are not stored as part of the
-                // transaction
-                block_hash,
-                block_number,
-                transaction_index,
-                // EIP-4844 fields
-                max_fee_per_blob_gas: signed_tx.max_fee_per_blob_gas(),
-                blob_versioned_hashes,
-                authorization_list,
-            },
-            ..Default::default()
+        Transaction {
+            inner,
+            block_hash,
+            block_number,
+            transaction_index,
+            from,
+            effective_gas_price: Some(effective_gas_price),
         }
     }
 
     fn otterscan_api_truncate_input(tx: &mut Self::Transaction) {
-        tx.inner.input = tx.inner.input.slice(..4);
-    }
-
-    fn tx_type(tx: &Self::Transaction) -> u8 {
-        tx.inner.transaction_type.unwrap_or(0)
+        let input = match &mut tx.inner {
+            TxEnvelope::Eip1559(tx) => &mut tx.tx_mut().input,
+            TxEnvelope::Eip2930(tx) => &mut tx.tx_mut().input,
+            TxEnvelope::Legacy(tx) => &mut tx.tx_mut().input,
+            TxEnvelope::Eip4844(tx) => match tx.tx_mut() {
+                TxEip4844Variant::TxEip4844(tx) => &mut tx.input,
+                TxEip4844Variant::TxEip4844WithSidecar(tx) => &mut tx.tx.input,
+            },
+            TxEnvelope::Eip7702(tx) => &mut tx.tx_mut().input,
+            _ => return,
+        };
+        *input = input.slice(..4);
     }
 }
 
@@ -170,32 +158,61 @@ impl TransactionCompat for OpTxBuilder {
         tx: TransactionSignedEcRecovered,
         tx_info: TransactionInfo,
     ) -> Self::Transaction {
-        let signed_tx = tx.clone().into_signed();
+        let from = tx.signer();
+        let TransactionSigned { transaction, signature, hash } = tx.into_signed();
 
-        let mut inner = EthTxBuilder.fill(tx, tx_info).inner;
-
-        if signed_tx.is_deposit() {
-            inner.gas_price = Some(signed_tx.max_fee_per_gas())
-        }
+        let inner = match transaction {
+            reth_primitives::Transaction::Legacy(tx) => {
+                Signed::new_unchecked(tx, signature, hash).into()
+            }
+            reth_primitives::Transaction::Eip2930(tx) => {
+                Signed::new_unchecked(tx, signature, hash).into()
+            }
+            reth_primitives::Transaction::Eip1559(tx) => {
+                Signed::new_unchecked(tx, signature, hash).into()
+            }
+            reth_primitives::Transaction::Eip4844(_) => unreachable!(),
+            reth_primitives::Transaction::Eip7702(tx) => {
+                Signed::new_unchecked(tx, signature, hash).into()
+            }
+            reth_primitives::Transaction::Deposit(tx) => OpTxEnvelope::Deposit(tx),
+        };
 
         let deposit_receipt_version = Some(0);
 
+        let TransactionInfo {
+            block_hash, block_number, index: transaction_index, base_fee, ..
+        } = tx_info;
+
+        let effective_gas_price = base_fee
+            .map(|base_fee| {
+                inner.effective_tip_per_gas(base_fee as u64).unwrap_or_default() + base_fee
+            })
+            .unwrap_or_else(|| inner.max_fee_per_gas());
+
         Optransaction {
-            inner,
-            source_hash: signed_tx.source_hash(),
-            mint: signed_tx.mint(),
-            // only include is_system_tx if true: <https://github.com/ethereum-optimism/op-geth/blob/641e996a2dcf1f81bac9416cb6124f86a69f1de7/internal/ethapi/api.go#L1518-L1518>
-            is_system_tx: (signed_tx.is_deposit() && signed_tx.is_system_transaction())
-                .then_some(true),
+            inner: alloy_rpc_types::Transaction {
+                inner,
+                block_hash,
+                block_number,
+                transaction_index,
+                from,
+                effective_gas_price: Some(effective_gas_price),
+            },
             deposit_receipt_version,
         }
     }
 
     fn otterscan_api_truncate_input(tx: &mut Self::Transaction) {
-        tx.inner.input = tx.inner.input.slice(..4);
+        let input = match &mut tx.inner.inner {
+            OpTxEnvelope::Eip1559(tx) => &mut tx.tx_mut().input,
+            OpTxEnvelope::Eip2930(tx) => &mut tx.tx_mut().input,
+            OpTxEnvelope::Legacy(tx) => &mut tx.tx_mut().input,
+            OpTxEnvelope::Eip7702(tx) => &mut tx.tx_mut().input,
+            OpTxEnvelope::Deposit(tx) => &mut tx.input,
+            _ => return,
+        };
+        *input = input.slice(..4);
     }
 
-    fn tx_type(tx: &Self::Transaction) -> u8 {
-        tx.inner.transaction_type.unwrap_or_default()
-    }
 }

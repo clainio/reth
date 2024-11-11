@@ -14,16 +14,15 @@ use alloy_consensus::{
 use alloy_eips::{
     eip2718::Encodable2718,
     eip2930::AccessList,
-    eip4844::{BlobAndProofV1, BlobTransactionValidationError},
+    eip4844::{BlobAndProofV1, BlobTransactionSidecar, BlobTransactionValidationError},
 };
 use alloy_primitives::{Address, TxHash, TxKind, B256, U256};
 use futures_util::{ready, Stream};
 use reth_eth_wire_types::HandleMempoolData;
 use reth_execution_types::ChangedAccount;
 use reth_primitives::{
-    kzg::KzgSettings, transaction::TryFromRecoveredTransactionError, BlobTransactionSidecar,
-    PooledTransactionsElement, PooledTransactionsElementEcRecovered, SealedBlock, Transaction,
-    TransactionSignedEcRecovered,
+    kzg::KzgSettings, transaction::TryFromRecoveredTransactionError, PooledTransactionsElement,
+    PooledTransactionsElementEcRecovered, SealedBlock, Transaction, TransactionSignedEcRecovered,
 };
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -738,6 +737,11 @@ impl fmt::Display for CanonicalStateUpdate<'_> {
             .finish()
     }
 }
+
+/// Alias to restrict the [`BestTransactions`] items to the pool's transaction type.
+pub type BestTransactionsFor<Pool> = Box<
+    dyn BestTransactions<Item = Arc<ValidPoolTransaction<<Pool as TransactionPool>::Transaction>>>,
+>;
 
 /// An `Iterator` that only returns transactions that are ready to be executed.
 ///
@@ -1502,7 +1506,7 @@ mod tests {
     use super::*;
     use alloy_consensus::{TxEip1559, TxEip2930, TxEip4844, TxEip7702, TxLegacy};
     use alloy_eips::eip4844::DATA_GAS_PER_BLOB;
-    use alloy_primitives::Signature;
+    use alloy_primitives::PrimitiveSignature as Signature;
     use reth_primitives::TransactionSigned;
 
     #[test]

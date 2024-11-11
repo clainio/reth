@@ -2,6 +2,10 @@
 //! the `eth_` namespace.
 //! 
 use alloy_consensus::TxEnvelope;
+use op_alloy_consensus::OpTxEnvelope;
+#[cfg(feature = "optimism")]
+use op_alloy_consensus::OpTxEnvelope::Deposit;
+
 use alloy_dyn_abi::TypedData;
 use alloy_eips::{eip2930::AccessListResult, BlockId, BlockNumberOrTag};
 use alloy_json_rpc::RpcObject;
@@ -26,7 +30,7 @@ use crate::{
 };
 use revm_primitives::FixedBytes;
 use crate::helpers::data::{self, EnrichedBlock, EnrichedTransaction};
-use alloy_primitives::Signature as Alloy_Signature;
+use alloy_primitives::PrimitiveSignature as Alloy_Signature;
 use revm_primitives::hex;
 
 /// Helper trait, unifies functionality that must be supported to implement all RPC methods for
@@ -515,8 +519,8 @@ where
             
             let block_header_reth = block_header.map(|header| reth_primitives::Header{ 
                 parent_hash: header.parent_hash, 
-                ommers_hash: header.uncles_hash, 
-                beneficiary: header.miner, 
+                ommers_hash: header.ommers_hash, 
+                beneficiary: header.beneficiary, 
                 state_root: header.state_root, 
                 transactions_root: header.transactions_root, 
                 receipts_root:header.receipts_root, 
@@ -527,14 +531,14 @@ where
                 gas_limit: header.gas_limit, 
                 gas_used: header.gas_used, 
                 timestamp: header.timestamp, 
-                mix_hash: header.mix_hash.unwrap(), 
-                nonce: header.nonce.unwrap_or_default(), 
+                mix_hash: header.mix_hash, 
+                nonce: header.nonce, 
                 base_fee_per_gas:None, 
                 blob_gas_used: None,
                 excess_blob_gas: None, 
                 parent_beacon_block_root: None, 
                 requests_hash: None, 
-                extra_data: header.extra_data
+                extra_data: header.extra_data.clone()
             });
 
             if block_header_reth.is_none(){
@@ -657,7 +661,7 @@ where
                let mut alloy_public_key = String::new();
                let mut check_address:Address = Default::default();
 
-               let is_bridge:bool;
+               let mut is_bridge:bool = false;
 
                #[cfg(not(feature = "optimism"))]
                {
@@ -666,16 +670,20 @@ where
 
                #[cfg(feature = "optimism")]
                {
-                    is_bridge = trx.source_hash.is_some();
+                    is_bridge = match trx.inner.inner{
+                       Deposit(_) =>true,
+                       _ => false,
+                   };
                }
 
                if !is_bridge{
                 
+               let mut tx_message_hash: Option<FixedBytes<32>> = None;
+               let mut tx_sig: Option<Alloy_Signature> = None;
+
+               #[cfg(not(feature = "optimism"))]
                match TxEnvelope::try_from(trx.inner.clone()) {
                    Ok(tx_envelope) => {
-                        let tx_message_hash: Option<FixedBytes<32>>;
-                        let tx_sig: Option<Alloy_Signature>;
-
                     match tx_envelope{
                         TxEnvelope::Legacy(typed_tx) =>{
                             tx_message_hash = Some(typed_tx.signature_hash());
@@ -706,38 +714,74 @@ where
                             return Err(trx_trace_hash_error)    
                            }
                         }
-
-                    if tx_sig.is_none() || tx_message_hash.is_none(){
-                        let trx_sig_error = ErrorObjectOwned::owned(
-                            1,
-                            format!("Signature not extracted from transaction {}", trx.tx_hash()),
-                            None::<()> 
-                        );
-                        return Err(trx_sig_error)    
-                    }
-
-                    let alloy_sig = tx_sig.unwrap().recover_from_prehash(&tx_message_hash.unwrap());
-                    match alloy_sig{
-                        Ok(signature) =>{
-                            let ec = signature.to_encoded_point(true);
-
-                            check_address = Address::from_public_key(&signature);
-                            alloy_public_key = format!("0x{}", hex::encode(ec.as_bytes()));
-                        }
-                        Err(p_key_err)=>{
-                            let alloy_pub_key_err = ErrorObjectOwned::owned(
-                                1,
-                                format!("Public key not extracted from message and signature, error: {}, transaction hash: {}"
-                                , p_key_err, trx.tx_hash()),
-                                None::<()>
-                            );
-                            return Err(alloy_pub_key_err);
-                        }
-                    }
                 }
                 Err(e) => {
-                    // Handle conversion error
                     println!("Conversion error: {:?}", e);
+                }
+            }//match TxEnvelope::try_from
+
+            #[cfg(feature = "optimism")]
+            match OpTxEnvelope::try_from(trx.inner.inner.clone()) {
+                Ok(tx_envelope) => {
+                 match tx_envelope{
+                    OpTxEnvelope::Legacy(typed_tx) =>{
+                         tx_message_hash = Some(typed_tx.signature_hash());
+                         tx_sig = Some(typed_tx.signature().clone());
+                     }
+                     OpTxEnvelope::Eip1559(typed_tx)=>{
+                         tx_message_hash = Some(typed_tx.signature_hash());
+                         tx_sig = Some(typed_tx.signature().clone());
+                     }
+                     OpTxEnvelope::Eip2930(typed_tx)=>{
+                         tx_message_hash = Some(typed_tx.signature_hash());
+                         tx_sig = Some(typed_tx.signature().clone());
+                     }
+                     OpTxEnvelope::Eip7702(typed_tx)=>{
+                         tx_message_hash = Some(typed_tx.signature_hash());
+                         tx_sig = Some(typed_tx.signature().clone());
+                    }
+                    OpTxEnvelope::Deposit(_)=>{
+                    }
+                     _ =>{
+                         let trx_trace_hash_error = ErrorObjectOwned::owned(
+                             3,
+                             "Unmatched transaction type",
+                             None::<()> 
+                         );
+                         return Err(trx_trace_hash_error)    
+                        }
+                     }
+             }
+             Err(e) => {
+                 println!("Conversion error: {:?}", e);
+             }
+         }//match OpTxEnvelope::try_from
+
+            if tx_sig.is_none() || tx_message_hash.is_none(){
+                let trx_sig_error = ErrorObjectOwned::owned(
+                    1,
+                    format!("Signature not extracted from transaction {}", trx.tx_hash()),
+                    None::<()> 
+                );
+                return Err(trx_sig_error)    
+            }
+
+            let alloy_sig = tx_sig.unwrap().recover_from_prehash(&tx_message_hash.unwrap());
+            match alloy_sig{
+                Ok(signature) =>{
+                    let ec = signature.to_encoded_point(true);
+
+                    check_address = Address::from_public_key(&signature);
+                    alloy_public_key = format!("0x{}", hex::encode(ec.as_bytes()));
+                }
+                Err(p_key_err)=>{
+                    let alloy_pub_key_err = ErrorObjectOwned::owned(
+                        1,
+                        format!("Public key not extracted from message and signature, error: {}, transaction hash: {}"
+                        , p_key_err, trx.tx_hash()),
+                        None::<()>
+                    );
+                    return Err(alloy_pub_key_err);
                 }
             }
 
@@ -749,7 +793,8 @@ where
                     );
                     return Err(trx_pub_key_addr_error)
                 }
-            }
+            }//is_bridge
+
                 enriched_trxs.push(data::EnrichedTransaction{
                         inner: trx,
                         public_key: if !alloy_public_key.is_empty(){
@@ -767,7 +812,6 @@ where
             header: block.header,
             uncles: block.uncles,
             transactions: BlockTransactions::Full(enriched_trxs),
-            size: block.size,
             withdrawals: block.withdrawals
         };
 

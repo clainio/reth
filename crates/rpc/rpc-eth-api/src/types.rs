@@ -1,10 +1,13 @@
 //! Trait for specifying `eth` network dependent API types.
 
-use std::{error::Error, fmt};
+use std::{
+    error::Error,
+    fmt::{self},
+};
 use alloy_rpc_types_eth::Transaction;
 
 use alloy_network:: Network;
-use alloy_rpc_types::{serde_helpers::WithOtherFields, Block};
+use alloy_rpc_types:: Block;
 use reth_rpc_types_compat::TransactionCompat;
 
 use crate::{AsEthApiError, FromEthApiError, FromEvmError};
@@ -37,7 +40,7 @@ pub type RpcBlock<T> = Block<RpcTransaction<T>, <T as Network>::HeaderResponse>;
 
 /// Adapter for ETH specific block type.
 #[cfg(not(feature = "optimism"))]
-pub type EthRpcBlock = Block<WithOtherFields<Transaction>, alloy_rpc_types::Header>;
+pub type EthRpcBlock = Block<Transaction, alloy_rpc_types::Header>;
 
 /// Adapter for Optimism specific block type.
 #[cfg(feature = "optimism")]
