@@ -75,4 +75,5 @@ optimism = [
 	"reth-optimism-consensus/optimism",
 	"reth-optimism-payload-builder/optimism",
 	"reth-optimism-primitives/optimism",
+	"reth-rpc-eth-api/optimism",
 ]
